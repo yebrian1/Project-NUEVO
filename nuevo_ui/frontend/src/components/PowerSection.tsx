@@ -8,7 +8,7 @@ const VBAT_MIN_PRESENT = 2.0; // matches firmware VBAT_MIN_PRESENT_V
 type BatteryType = '10 Cell NiMH' | '3S LiPo' | '4S LiPo';
 
 const BATTERY_RANGES: Record<BatteryType, { min: number; max: number }> = {
-  '10 Cell NiMH': { min: 9, max: 13 },
+  '10 Cell NiMH': { min: 9, max: 15.5 },
   '3S LiPo':      { min: 9.9, max: 12.6 },
   '4S LiPo':      { min: 13.2, max: 16.8 },
 };
