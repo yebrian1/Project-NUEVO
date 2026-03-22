@@ -55,12 +55,46 @@ export function UserIOSection() {
     return () => window.removeEventListener("scroll", close, true);
   }, [showPicker]);
 
+  useEffect(() => {
+    const count = Math.max(1, io?.neoPixels?.length ?? 0);
+    setStrips((prev) => {
+      const next: WS2812B[] = [];
+      for (let i = 0; i < count; i += 1) {
+        const fromIo = io?.neoPixels?.[i];
+        const prevStrip = prev[i] ?? { id: i + 1, r: 0, g: 0, b: 0, brightness: 0, hue: 0 };
+        if (fromIo) {
+          const pickerOpenForStrip = showPicker === i + 1;
+          const derived = rgbToHueBrightness(fromIo.r, fromIo.g, fromIo.b, prevStrip.hue);
+          next.push({
+            ...prevStrip,
+            id: i + 1,
+            r: fromIo.r,
+            g: fromIo.g,
+            b: fromIo.b,
+            hue: pickerOpenForStrip ? prevStrip.hue : derived.hue,
+            brightness: pickerOpenForStrip ? prevStrip.brightness : derived.brightness,
+          });
+        } else {
+          next.push({ ...prevStrip, id: i + 1 });
+        }
+      }
+      return next;
+    });
+  }, [io?.neoPixels, showPicker]);
+
   // Button state from bitmask
   const buttonMask      = io?.buttonMask ?? 0;
-  const limitSwitchMask = system?.limitSwitchMask ?? 0;
+  const configuredLimitMask = system?.limitSwitchMask ?? 0;
 
   const isButtonPressed     = (id: number) => ((buttonMask >> (id - 1)) & 1) === 1;
-  const isLimitPressed      = (id: number) => ((limitSwitchMask >> (id - 1)) & 1) === 1;
+  const isLimitPressed      = (id: number) => {
+    const configured = ((configuredLimitMask >> (id - 1)) & 1) === 1;
+    // Limit inputs 1-8 share GPIO with buttons 3-10, so the live limit state
+    // is derived from those shared button bits only when a limit is configured.
+    const sharedButtonBit = id + 1; // limit1->button3(bit2) ... limit8->button10(bit9)
+    const active = ((buttonMask >> sharedButtonBit) & 1) === 1;
+    return configured && active;
+  };
 
   // Derive LED on/off from server-reported brightness (true = non-zero brightness)
   const ledOn = (index: number): boolean => (io?.ledBrightness?.[index] ?? 0) > 0;
@@ -88,6 +122,42 @@ export function UserIOSection() {
     else if (hue < 300) { r = x; g = 0; b = c; }
     else                { r = c; g = 0; b = x; }
     return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
+  };
+
+  const rgbToHueBrightness = (
+    r: number,
+    g: number,
+    b: number,
+    fallbackHue: number,
+  ): { hue: number; brightness: number } => {
+    const rn = r / 255;
+    const gn = g / 255;
+    const bn = b / 255;
+    const max = Math.max(rn, gn, bn);
+    const min = Math.min(rn, gn, bn);
+    const delta = max - min;
+    const lightness = (max + min) / 2;
+
+    if (delta === 0) {
+      return {
+        hue: fallbackHue,
+        brightness: Math.round(lightness * 100),
+      };
+    }
+
+    let hue = 0;
+    if (max === rn) {
+      hue = ((gn - bn) / delta) % 6;
+    } else if (max === gn) {
+      hue = (bn - rn) / delta + 2;
+    } else {
+      hue = (rn - gn) / delta + 4;
+    }
+
+    return {
+      hue: (hue * 60 + 360) % 360,
+      brightness: Math.round(lightness * 100),
+    };
   };
 
   const rgbToHex = (r: number, g: number, b: number) =>

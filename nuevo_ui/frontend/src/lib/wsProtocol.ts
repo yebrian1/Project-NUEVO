@@ -226,6 +226,14 @@ export interface SensorMagCalStatusData {
   offsetY: number
   offsetZ: number
   savedToEeprom: number
+  bridgeProgress?: number
+  bridgeReady?: boolean
+  bridgeFallbackReady?: boolean
+  bridgeSampleProgress?: number
+  bridgeSpanProgress?: number
+  bridgeRatioProgress?: number
+  bridgeFitProgress?: number
+  bridgeBestStdRatio?: number | null
 }
 
 // ============================================================================

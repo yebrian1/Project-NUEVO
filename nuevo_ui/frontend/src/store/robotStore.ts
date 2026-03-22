@@ -52,13 +52,13 @@ const SYSTEM_ERROR_LABELS: [number, string][] = [
   [0x04, 'Encoder Fail'],
   [0x08, 'I2C Error'],
   [0x10, 'IMU Error'],
-  [0x20, 'Liveness Lost'],
-  [0x40, 'Loop Overrun'],
 ]
 
-const WARN_TO_LEGACY_ERROR: [number, number][] = [
-  [0x01, 0x20],
-  [0x02, 0x40],
+const SYSTEM_WARNING_LABELS: [number, string][] = [
+  [0x01, 'Liveness Lost'],
+  [0x02, 'Loop Overrun'],
+  [0x04, 'No Battery'],
+  [0x08, 'Control Miss'],
 ]
 
 const DC_FAULT_LABELS: [number, string][] = [
@@ -93,11 +93,7 @@ function initDCMotors(): DCMotorState[] {
 
 function buildLegacyErrorFlags(sysState: SysStateData | null): number {
   if (!sysState) return 0
-  let errorFlags = int(sysState.errorFlags)
-  for (const [warnBit, legacyBit] of WARN_TO_LEGACY_ERROR) {
-    if (sysState.warningFlags & warnBit) errorFlags |= legacyBit
-  }
-  return errorFlags
+  return int(sysState.errorFlags)
 }
 
 function int(value: number | undefined | null): number {
@@ -200,6 +196,7 @@ interface RobotState {
   magCal: MagCalStatusData | null
   rangeSensors: SensorRangeData[]
   errorLog: ErrorLogEntry[]
+  warningLog: ErrorLogEntry[]
   sysStateRaw: SysStateData | null
   sysInfoRaw: SysInfoRspData | null
   sysConfigRaw: SysConfigRspData | null
@@ -212,6 +209,7 @@ interface RobotState {
   dispatch: (topic: string, data: any, ts?: number) => void
   setMotorRecording: (motorIdx: number, active: boolean) => void
   clearErrorLog: () => void
+  clearWarningLog: () => void
 }
 
 export const useRobotStore = create<RobotState>((set) => ({
@@ -229,6 +227,7 @@ export const useRobotStore = create<RobotState>((set) => ({
   magCal: null,
   rangeSensors: [],
   errorLog: [],
+  warningLog: [],
   sysStateRaw: null,
   sysInfoRaw: null,
   sysConfigRaw: null,
@@ -240,6 +239,7 @@ export const useRobotStore = create<RobotState>((set) => ({
   stepConfigCache: {},
 
   clearErrorLog: () => set({ errorLog: [] }),
+  clearWarningLog: () => set({ warningLog: [] }),
 
   setMotorRecording: (motorIdx: number, active: boolean) => {
     set((state) => {
@@ -258,6 +258,7 @@ export const useRobotStore = create<RobotState>((set) => ({
       case 'sys_state':
         set((state) => {
           const sysStateRaw = data as SysStateData
+          const prevSystem = state.system
           const system = buildSystemStatus(
             sysStateRaw,
             state.sysPowerRaw,
@@ -267,15 +268,25 @@ export const useRobotStore = create<RobotState>((set) => ({
           )
 
           let errorLog = state.errorLog
+          let warningLog = state.warningLog
+          const prevErrorFlags = prevSystem?.errorFlags ?? 0
+          const prevWarningFlags = prevSystem?.warningFlags ?? 0
           if (system?.errorFlags) {
             for (const [bit, label] of SYSTEM_ERROR_LABELS) {
-              if (system.errorFlags & bit) {
+              if ((system.errorFlags & bit) && (prevErrorFlags & bit) === 0) {
                 errorLog = addOrIncrement(errorLog, `sys_${bit}`, label)
               }
             }
           }
+          if (system?.warningFlags) {
+            for (const [bit, label] of SYSTEM_WARNING_LABELS) {
+              if ((system.warningFlags & bit) && (prevWarningFlags & bit) === 0) {
+                warningLog = addOrIncrement(warningLog, `warn_${bit}`, label)
+              }
+            }
+          }
 
-          const update: Partial<RobotState> = { sysStateRaw, system, errorLog }
+          const update: Partial<RobotState> = { sysStateRaw, system, errorLog, warningLog }
           if (system && (system.state === 3 || system.state === 4)) {
             update.dcMotors = state.dcMotors.map((m) => ({
               ...m,

@@ -2,7 +2,7 @@ import { useRef, useEffect, useState } from 'react';
 import { useRobotStore } from '../store/robotStore';
 import { Modal } from './common/Modal';
 import { wsSend } from '../lib/wsSend';
-import figure8Image from '../assets/imu_calibration_figure8.svg';
+import figure8Image from '../assets/arrow.svg';
 import type { IMUData, MagCalStatusData, SensorRangeData } from '../lib/wsProtocol';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -525,9 +525,10 @@ function IMUCalibrationModal({
   const spanX = magCal ? Math.max(0, magCal.maxX - magCal.minX) : 0
   const spanY = magCal ? Math.max(0, magCal.maxY - magCal.minY) : 0
   const spanZ = magCal ? Math.max(0, magCal.maxZ - magCal.minZ) : 0
-  const sampleProgress = Math.min((magCal?.sampleCount ?? 0) / 250, 1)
-  const spanProgress = Math.min((spanX / 40 + spanY / 40 + spanZ / 40) / 3, 1)
-  const progress = Math.round((sampleProgress * 0.4 + spanProgress * 0.6) * 100)
+  const progress = magCal?.bridgeProgress ?? 0
+  const bridgeReady = magCal?.bridgeReady ?? false
+  const bridgeFallbackReady = magCal?.bridgeFallbackReady ?? false
+  const fitQuality = magCal?.bridgeBestStdRatio
 
   let title = 'IMU Calibration'
   let subtitle = 'Collecting magnetometer data for heading correction.'
@@ -557,7 +558,11 @@ function IMUCalibrationModal({
               <p className="mt-2 text-sm text-white/70">
                 Move the robot in a slow figure-8 while also rotating and tilting it through as many orientations as possible. Lift it and include roll and pitch, not only flat yaw motion.
               </p>
-              <img src={figure8Image} alt="Figure-8 motion for IMU calibration" className="mt-4 w-full rounded-xl border border-white/10 bg-black/20" />
+              <img
+                src={figure8Image}
+                alt="Figure-8 motion for IMU calibration"
+                className="mt-4 w-56 max-w-full mx-auto"
+              />
             </div>
 
             <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -574,9 +579,12 @@ function IMUCalibrationModal({
               <div className="mt-3 grid grid-cols-2 gap-3 text-xs text-white/65">
                 <div>Samples: <span className="font-mono text-white">{magCal?.sampleCount ?? 0}</span></div>
                 <div>Span X/Y/Z: <span className="font-mono text-white">{spanX.toFixed(1)} / {spanY.toFixed(1)} / {spanZ.toFixed(1)} µT</span></div>
+                <div>Bridge readiness: <span className="font-mono text-white">{bridgeReady ? 'ready' : 'collecting'}</span></div>
+                <div>Fallback save: <span className="font-mono text-white">{bridgeFallbackReady ? 'available' : 'not yet'}</span></div>
+                <div>Fit quality: <span className="font-mono text-white">{fitQuality != null ? fitQuality.toFixed(3) : '—'}</span></div>
               </div>
               <p className="mt-3 text-xs text-white/45">
-                The bridge will save automatically once the magnetometer cloud has enough stable 3D coverage.
+                The bridge will save automatically when the backend decides the collected data is good enough.
               </p>
             </div>
           </>
@@ -690,17 +698,9 @@ export function SensorSection({ source }: SensorSectionProps) {
   const sawSamplingRef = useRef(false);
   const completionTimerRef = useRef<number | null>(null);
 
-  if (source === 'rpi') {
-    return <PlaceholderCard label="RPi" />;
-  }
-
   const attachedSensors = system?.attachedSensors ?? 0;
   const hasIMU = ((attachedSensors & 0x01) !== 0) || imu !== null || magCal !== null || ((system?.runtimeFlags ?? 0) & 0x10) !== 0;
   const hasAny = hasIMU || rangeSensors.length > 0;
-
-  if (!hasAny) {
-    return <PlaceholderCard label="Arduino" />;
-  }
 
   const resetCalibrationModal = () => {
     if (completionTimerRef.current) {
@@ -745,14 +745,16 @@ export function SensorSection({ source }: SensorSectionProps) {
   };
 
   useEffect(() => {
+    if (source === 'rpi') return;
     if (!calibrationOpen || calibrationPhase !== 'preparing') return;
     if (system?.state === 1) {
       setCalibrationPhase('starting');
       wsSend('sensor_mag_cal_cmd', { command: 1 });
     }
-  }, [calibrationOpen, calibrationPhase, system?.state]);
+  }, [source, calibrationOpen, calibrationPhase, system?.state]);
 
   useEffect(() => {
+    if (source === 'rpi') return;
     if (!calibrationOpen) return;
 
     if (magCal?.state === 1) {
@@ -781,7 +783,15 @@ export function SensorSection({ source }: SensorSectionProps) {
       setCalibrationPhase('failed');
       setCalibrationError('Calibration stopped before a valid fit was saved. Try again and include more 3D tilt coverage.');
     }
-  }, [calibrationOpen, imu?.magCalibrated, magCal?.state]);
+  }, [source, calibrationOpen, imu?.magCalibrated, magCal?.state]);
+
+  if (source === 'rpi') {
+    return <PlaceholderCard label="RPi" />;
+  }
+
+  if (!hasAny) {
+    return <PlaceholderCard label="Arduino" />;
+  }
 
   return (
     <div className="space-y-3">

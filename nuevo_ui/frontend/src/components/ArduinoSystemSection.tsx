@@ -24,11 +24,15 @@ export function ArduinoSystemSection() {
   const system          = useRobotStore((s) => s.system);
   const serialConnected = useRobotStore((s) => s.serialConnected);
   const errorLog        = useRobotStore((s) => s.errorLog);
+  const warningLog      = useRobotStore((s) => s.warningLog);
   const clearErrorLog   = useRobotStore((s) => s.clearErrorLog);
+  const clearWarningLog = useRobotStore((s) => s.clearWarningLog);
 
   const firmwareState = system?.state ?? -1;
   const isRunning     = firmwareState === 2;
   const isErrorOrStop = firmwareState === 3 || firmwareState === 4;
+  const hasError      = (system?.errorFlags ?? 0) !== 0 || isErrorOrStop;
+  const hasWarning    = !hasError && (system?.warningFlags ?? 0) !== 0;
 
   // ── Loading state for system action buttons ───────────────────────────────
   // Clears automatically when firmware state changes or after 3 s timeout.
@@ -59,6 +63,7 @@ export function ArduinoSystemSection() {
   const handleReset = () => triggerAction('reset', 3);
 
   const stateInfo = system ? (STATE_LABELS[system.state] ?? { label: 'UNKNOWN', color: 'text-white/60' }) : null;
+  const stateColor = hasError ? 'text-rose-400' : hasWarning ? 'text-amber-400' : stateInfo?.color;
 
   return (
     <div className="relative rounded-2xl p-4 backdrop-blur-2xl bg-white/10 border border-white/20 shadow-xl h-full">
@@ -127,7 +132,7 @@ export function ArduinoSystemSection() {
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-white/60">State</span>
-                  <span className={`text-xs font-mono font-semibold ${stateInfo?.color}`}>
+                  <span className={`text-xs font-mono font-semibold ${stateColor}`}>
                     {stateInfo?.label}
                   </span>
                 </div>
@@ -172,20 +177,27 @@ export function ArduinoSystemSection() {
 
               {/* Status indicator */}
               <div className="flex items-center gap-2 pt-2 border-t border-white/10">
-                {system.state === 2 ? (
+                {hasError ? (
+                  system.state === 4 ? (
+                    <>
+                      <AlertTriangle className="size-3 text-rose-500" />
+                      <span className="text-xs text-rose-400">E-STOP Active</span>
+                    </>
+                  ) : (
+                    <>
+                      <AlertTriangle className="size-3 text-rose-400" />
+                      <span className="text-xs text-rose-400">Error (flags: 0x{system.errorFlags.toString(16).padStart(2, '0')})</span>
+                    </>
+                  )
+                ) : hasWarning ? (
+                  <>
+                    <AlertTriangle className="size-3 text-amber-400" />
+                    <span className="text-xs text-amber-300">Warning (flags: 0x{system.warningFlags.toString(16).padStart(2, '0')})</span>
+                  </>
+                ) : system.state === 2 ? (
                   <>
                     <CheckCircle className="size-3 text-emerald-400" />
                     <span className="text-xs text-white/60">System Normal</span>
-                  </>
-                ) : system.state === 4 ? (
-                  <>
-                    <AlertTriangle className="size-3 text-rose-500" />
-                    <span className="text-xs text-rose-400">E-STOP Active</span>
-                  </>
-                ) : system.state === 3 ? (
-                  <>
-                    <AlertTriangle className="size-3 text-rose-400" />
-                    <span className="text-xs text-rose-400">Error (flags: 0x{system.errorFlags.toString(16).padStart(2, '0')})</span>
                   </>
                 ) : (
                   <>
@@ -196,6 +208,34 @@ export function ArduinoSystemSection() {
               </div>
 
               {/* Error log */}
+              {warningLog.length > 0 && (
+                <div className="rounded-xl backdrop-blur-xl bg-amber-500/10 border border-amber-400/30 p-2">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-semibold text-amber-300 flex items-center gap-1">
+                      <AlertTriangle className="size-3" />
+                      Warning Log
+                    </span>
+                    <button
+                      onClick={clearWarningLog}
+                      className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs text-white/50 hover:text-white hover:bg-white/10 transition-all"
+                    >
+                      <X className="size-3" />
+                      Clear
+                    </button>
+                  </div>
+                  <div className="space-y-1 max-h-24 overflow-y-auto">
+                    {warningLog.map((entry) => (
+                      <div key={entry.key} className="flex items-center justify-between">
+                        <span className="text-xs text-amber-200">{entry.label}</span>
+                        <span className="text-xs font-mono font-bold text-amber-300 bg-amber-500/20 px-1.5 py-0.5 rounded-full min-w-[1.5rem] text-center">
+                          {entry.count}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {errorLog.length > 0 && (
                 <div className="rounded-xl backdrop-blur-xl bg-rose-500/10 border border-rose-500/30 p-2">
                   <div className="flex items-center justify-between mb-1.5">
