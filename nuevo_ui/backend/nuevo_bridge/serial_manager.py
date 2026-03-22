@@ -151,6 +151,7 @@ class SerialManager:
             )
             self.connected = True
             self.stats["connected"] = True
+            self.message_router.handle_transport_connection_change(True)
             print(f"[Serial] Connected to {SERIAL_PORT} @ {SERIAL_BAUD} baud")
             return True
         except Exception as e:
@@ -234,6 +235,7 @@ class SerialManager:
                 print(f"[Serial] Read error: {e}")
                 self.connected = False
                 self.stats["connected"] = False
+                self.message_router.handle_transport_connection_change(False)
                 if self.ser:
                     try:
                         self.ser.close()
@@ -268,6 +270,7 @@ class SerialManager:
                 print(f"[Serial] Send error: {e}")
                 self.connected = False
                 self.stats["connected"] = False
+                self.message_router.handle_transport_connection_change(False)
 
     def _send_heartbeat(self) -> None:
         p = PayloadHeartbeat()

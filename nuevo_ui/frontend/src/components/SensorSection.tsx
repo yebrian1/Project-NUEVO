@@ -407,10 +407,14 @@ type CalibrationPhase = 'preparing' | 'starting' | 'sampling' | 'complete' | 'fa
 function IMUCard({
   imu,
   magCal,
+  imuConfigured,
+  imuReady,
   onCalibrate,
 }: {
   imu: IMUData | null
   magCal: MagCalStatusData | null
+  imuConfigured: boolean
+  imuReady: boolean
   onCalibrate: () => void
 }) {
   const [tab, setTab] = useState<IMUTab>('3D View');
@@ -419,7 +423,20 @@ function IMUCard({
   if (!imu) {
     return (
       <Card title="IMU (ICM-20948)">
-        <p className="text-xs text-white/40 italic">Waiting for data…</p>
+        <div className="space-y-1">
+          <div className="flex justify-between items-baseline">
+            <span className="text-xs text-white/50">Fusion mode</span>
+            <span className="text-lg font-mono font-semibold text-white/25">—</span>
+          </div>
+          <div className="flex justify-between items-baseline">
+            <span className="text-xs text-white/50">Status</span>
+            <span className={`text-xs font-mono ${
+              imuConfigured && !imuReady ? 'text-amber-400' : 'text-white/30'
+            }`}>
+              {imuConfigured && !imuReady ? 'Not installed' : 'Waiting for telemetry'}
+            </span>
+          </div>
+        </div>
       </Card>
     );
   }
@@ -650,6 +667,25 @@ function RangeCard({ sensor }: { sensor: SensorRangeData }) {
   );
 }
 
+function RangePlaceholderCard({ sensorType, sensorId }: { sensorType: number; sensorId: number }) {
+  const typeLabel = SENSOR_TYPE_LABEL[sensorType] ?? `Type ${sensorType}`;
+
+  return (
+    <Card title={`${typeLabel} #${sensorId}`}>
+      <div className="space-y-1">
+        <div className="flex justify-between items-baseline">
+          <span className="text-xs text-white/50">Distance</span>
+          <span className="text-lg font-mono font-semibold text-white/25">— mm</span>
+        </div>
+        <div className="flex justify-between items-baseline">
+          <span className="text-xs text-white/50">Status</span>
+          <span className="text-xs font-mono text-white/30">Waiting for telemetry</span>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 // ─── Card shell ──────────────────────────────────────────────────────────────
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
@@ -699,8 +735,11 @@ export function SensorSection({ source }: SensorSectionProps) {
   const completionTimerRef = useRef<number | null>(null);
 
   const attachedSensors = system?.attachedSensors ?? 0;
-  const hasIMU = ((attachedSensors & 0x01) !== 0) || imu !== null || magCal !== null || ((system?.runtimeFlags ?? 0) & 0x10) !== 0;
-  const hasAny = hasIMU || rangeSensors.length > 0;
+  const imuConfigured = (attachedSensors & 0x01) !== 0;
+  const imuReady = ((system?.runtimeFlags ?? 0) & 0x10) !== 0;
+  const hasIMU = imuConfigured || imu !== null || magCal !== null ||imuReady;    
+  const hasUltrasonic = ((attachedSensors & 0x04) !== 0) || rangeSensors.length > 0;
+  const hasAny = hasIMU || hasUltrasonic;
 
   const resetCalibrationModal = () => {
     if (completionTimerRef.current) {
@@ -795,10 +834,21 @@ export function SensorSection({ source }: SensorSectionProps) {
 
   return (
     <div className="space-y-3">
-      {hasIMU && <IMUCard imu={imu} magCal={magCal} onCalibrate={beginCalibration} />}
+      {hasIMU && (
+        <IMUCard
+          imu={imu}
+          magCal={magCal}
+          imuConfigured={imuConfigured}
+          imuReady={imuReady}
+          onCalibrate={beginCalibration}
+        />
+      )}
       {rangeSensors.map((sensor) => (
         <RangeCard key={sensor.sensorId} sensor={sensor} />
       ))}
+      {hasUltrasonic && rangeSensors.length === 0 && (
+        <RangePlaceholderCard sensorType={0} sensorId={0} />
+      )}
       <IMUCalibrationModal
         open={calibrationOpen}
         phase={calibrationPhase}

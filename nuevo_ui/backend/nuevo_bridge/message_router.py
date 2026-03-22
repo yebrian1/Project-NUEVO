@@ -113,6 +113,36 @@ class MessageRouter:
                topic == "step_config_rsp" or topic.startswith("step_config_rsp:"):
                 self._latest_ws_messages.pop(topic, None)
 
+    def _invalidate_runtime_cache(self) -> None:
+        self._sys_state = None
+        self._sys_power = None
+        self._io_input = None
+        self._io_output = None
+        self._last_uptime_ms = None
+        self._dc_frame_counter = 0
+        self._mag_cal_controller.reset()
+        for topic in (
+            "sys_state",
+            "sys_power",
+            "io_input_state",
+            "io_output_state",
+            "dc_state_all",
+            "step_state_all",
+            "servo_state_all",
+            "sensor_imu",
+            "sensor_kinematics",
+            "sensor_ultrasonic_all",
+            "sensor_mag_cal_status",
+        ):
+            self._latest_ws_messages.pop(topic, None)
+
+    def handle_transport_connection_change(self, connected: bool) -> None:
+        self._invalidate_runtime_cache()
+        if connected:
+            self._request_bootstrap()
+        else:
+            self._invalidate_bootstrap_cache()
+
     def _request_bootstrap(self) -> None:
         self._invalidate_bootstrap_cache()
         self.send_wire_command("sys_info_req", {"target": 0xFF})

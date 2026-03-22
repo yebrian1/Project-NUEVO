@@ -227,6 +227,9 @@ class MagCalibrationController:
     def set_sender(self, sender: Optional[Callable[[str, dict], bool]]) -> None:
         self._sender = sender
 
+    def reset(self) -> None:
+        self._reset()
+
     def observe(self, topic: str, data: dict) -> None:
         if topic == "sensor_mag_cal_status":
             self._observe_status(data)

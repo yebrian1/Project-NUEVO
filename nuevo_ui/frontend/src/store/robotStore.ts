@@ -181,6 +181,32 @@ function cacheKey(motorNumber: number, loopType: number): string {
   return `${motorNumber}:${loopType}`
 }
 
+function clearedRobotState(connection: ConnectionData | null, serialConnected: boolean): Partial<RobotState> {
+  return {
+    serialConnected,
+    connection,
+    system: null,
+    voltage: null,
+    dcMotors: initDCMotors(),
+    steppers: [null, null, null, null],
+    servo: null,
+    io: null,
+    kinematics: null,
+    imu: null,
+    magCal: null,
+    rangeSensors: [],
+    sysStateRaw: null,
+    sysInfoRaw: null,
+    sysConfigRaw: null,
+    sysPowerRaw: null,
+    sysDiagRaw: null,
+    ioInputRaw: null,
+    ioOutputRaw: null,
+    dcPidCache: {},
+    stepConfigCache: {},
+  }
+}
+
 interface RobotState {
   connected: boolean
   serialConnected: boolean
@@ -287,6 +313,10 @@ export const useRobotStore = create<RobotState>((set) => ({
           }
 
           const update: Partial<RobotState> = { sysStateRaw, system, errorLog, warningLog }
+          const imuReady = (system?.runtimeFlags ?? 0) & 0x10
+          if (!imuReady) {
+            update.imu = null
+          }
           if (system && (system.state === 3 || system.state === 4)) {
             update.dcMotors = state.dcMotors.map((m) => ({
               ...m,
@@ -372,9 +402,21 @@ export const useRobotStore = create<RobotState>((set) => ({
         break
 
       case 'connection':
-        set({
-          connection: data as ConnectionData,
-          serialConnected: (data as ConnectionData).serialConnected,
+        set((state) => {
+          const connection = data as ConnectionData
+          const nextSerialConnected = connection.serialConnected
+          const prevSerialConnected = state.serialConnected
+
+          if (!nextSerialConnected || !prevSerialConnected) {
+            return {
+              ...clearedRobotState(connection, nextSerialConnected),
+            }
+          }
+
+          return {
+            connection,
+            serialConnected: nextSerialConnected,
+          }
         })
         break
 
