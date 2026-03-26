@@ -174,7 +174,7 @@ source install/setup.bash
 ros2 pkg list | grep -E 'bridge_interfaces|bridge|robot|sensors|vision'
 ros2 interface show bridge_interfaces/msg/SystemPower
 
-bridge
+ros2 run bridge bridge
 ```
 
 In another shell inside the same container:
@@ -216,7 +216,7 @@ with `NUEVO_BRIDGE_SOURCE`:
 
 ```bash
 export NUEVO_BRIDGE_SOURCE="$(pwd)/../nuevo_ui/backend"
-bridge
+ros2 run bridge bridge
 ```
 
 

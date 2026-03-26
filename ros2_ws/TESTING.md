@@ -213,7 +213,7 @@ source /ros2_ws/install/setup.bash
 Inside that shell:
 
 ```bash
-bridge
+ros2 run bridge bridge
 ```
 
 

@@ -49,4 +49,4 @@ COPY ros2_ws/docker/entrypoint.bridge.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["bridge"]
+CMD ["ros2", "run", "bridge", "bridge"]
