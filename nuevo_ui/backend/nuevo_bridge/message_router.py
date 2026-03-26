@@ -330,6 +330,7 @@ class MessageRouter:
         return [self._wrap("servo_state_all", {
             "pca9685Connected": int(payload.pca9685Connected),
             "pca9685Error": int(payload.pca9685Error),
+            "enabledMask": int(payload.enabledMask),
             "channels": channels,
             "timestamp": int(payload.timestamp),
         })]

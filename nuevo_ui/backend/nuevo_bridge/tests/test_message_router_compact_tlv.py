@@ -1,8 +1,8 @@
 import ctypes
 
-from nuevo_bridge.TLV_TypeDefs import DC_ENABLE, DC_HOME, DC_RESET_POSITION, SENSOR_MAG_CAL_CMD, SYS_DIAG_RSP, SYS_INFO_RSP, SYS_POWER, SYS_STATE
+from nuevo_bridge.TLV_TypeDefs import DC_ENABLE, DC_HOME, DC_RESET_POSITION, SENSOR_MAG_CAL_CMD, SERVO_STATE_ALL, SYS_DIAG_RSP, SYS_INFO_RSP, SYS_POWER, SYS_STATE
 from nuevo_bridge.message_router import MessageRouter
-from nuevo_bridge.payloads import PayloadDCEnable, PayloadDCHome, PayloadDCResetPosition, PayloadMagCalCmd, PayloadSysDiagRsp, PayloadSysInfoRsp, PayloadSysPower, PayloadSysState
+from nuevo_bridge.payloads import PayloadDCEnable, PayloadDCHome, PayloadDCResetPosition, PayloadMagCalCmd, PayloadServoStateAll, PayloadSysDiagRsp, PayloadSysInfoRsp, PayloadSysPower, PayloadSysState
 from tlvcodec import DecodeErrorCode, Decoder, Encoder
 
 
@@ -102,10 +102,29 @@ def main() -> None:
     decoded = router.decode_incoming(SYS_DIAG_RSP, bytes(diag))
     assert decoded is not None
 
+    servo = PayloadServoStateAll()
+    servo.pca9685Connected = 1
+    servo.pca9685Error = 0
+    servo.enabledMask = 0b0000000000000101
+    servo.pulseUs[0] = 1500
+    servo.pulseUs[2] = 1700
+    decoded = router.decode_incoming(SERVO_STATE_ALL, bytes(servo))
+    assert decoded is not None
+    if isinstance(decoded, list):
+        servo_message = decoded[0]
+    else:
+        servo_message = decoded
+    servo_data = servo_message["data"]
+    assert servo_data["enabledMask"] == 0b0000000000000101
+    assert servo_data["channels"][0]["enabled"] is True
+    assert servo_data["channels"][1]["enabled"] is False
+    assert servo_data["channels"][2]["enabled"] is True
+
     cached = router.get_cached_ws_messages()
     topics = [message["topic"] for message in cached]
     assert "sys_info_rsp" in topics
     assert "sys_diag_rsp" in topics
+    assert "servo_state_all" in topics
     assert router._latest_ws_messages["sys_diag_rsp"]["data"]["uartRxErrors"] == 7
 
     print("PASS: message router compact tlv")

@@ -172,7 +172,15 @@ def to_servo_state_all(data: dict, stamp: Time) -> ServoStateAll:
     msg.header = _header(stamp)
     msg.pca9685_connected = bool(data["pca9685Connected"])
     msg.pca9685_error = int(data["pca9685Error"])
-    msg.enabled_mask = int(data["enabledMask"])
+    enabled_mask = data.get("enabledMask")
+    if enabled_mask is None:
+        enabled_mask = 0
+        for item in data.get("channels", [])[:16]:
+            if item.get("enabled"):
+                channel_number = int(item.get("channelNumber", 0))
+                if 1 <= channel_number <= 16:
+                    enabled_mask |= 1 << (channel_number - 1)
+    msg.enabled_mask = int(enabled_mask)
     msg.timestamp = int(data.get("timestamp", 0))
     for index, item in enumerate(data.get("channels", [])[:16]):
         channel = ServoChannelState()
