@@ -21,8 +21,8 @@
  *  Byte 20–55  magMatrix    float×9    Row-major 3x3 soft-iron correction matrix
  * ─────────────────────────────────────────────────────────────
  *
- * Wheel geometry is no longer stored in EEPROM. Edit WHEEL_DIAMETER_MM and
- * WHEEL_BASE_MM in RobotKinematics.h to match your robot's physical dimensions.
+ * Wheel geometry is no longer stored in EEPROM. Seed defaults in config.h and
+ * optionally override them at runtime via SYS_ODOM_PARAM_SET.
  *
  * Usage:
  *   PersistentStorage::init();   // call once in setup()

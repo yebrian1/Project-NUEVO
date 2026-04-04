@@ -33,6 +33,14 @@
 extern DCMotor dcMotors[NUM_DC_MOTORS];
 
 namespace {
+void getOdomMotorTicks(int32_t &leftTicks, int32_t &rightTicks)
+{
+    const uint8_t leftMotorId = RobotKinematics::getLeftMotorId();
+    const uint8_t rightMotorId = RobotKinematics::getRightMotorId();
+    leftTicks = dcMotors[leftMotorId].getPosition();
+    rightTicks = dcMotors[rightMotorId].getPosition();
+}
+
 uint16_t limitMaskForGpio(uint8_t gpio)
 {
     switch (gpio) {
@@ -50,13 +58,16 @@ uint16_t limitMaskForGpio(uint8_t gpio)
 
 void reseedOdometryIfDriveMotor(uint8_t motorId)
 {
-    if (motorId != ODOM_LEFT_MOTOR && motorId != ODOM_RIGHT_MOTOR) {
+    const uint8_t leftMotorId = RobotKinematics::getLeftMotorId();
+    const uint8_t rightMotorId = RobotKinematics::getRightMotorId();
+    if (motorId != leftMotorId && motorId != rightMotorId) {
         return;
     }
 
-    RobotKinematics::reseed(
-        dcMotors[ODOM_LEFT_MOTOR].getPosition(),
-        dcMotors[ODOM_RIGHT_MOTOR].getPosition());
+    int32_t leftTicks = 0;
+    int32_t rightTicks = 0;
+    getOdomMotorTicks(leftTicks, rightTicks);
+    RobotKinematics::reseed(leftTicks, rightTicks);
 }
 } // namespace
 
@@ -892,6 +903,11 @@ void MessageCenter::routeMessage(uint8_t type, const uint8_t *payload, uint8_t l
             handleSysOdomReset((const PayloadSysOdomReset *)payload);
         break;
 
+    case SYS_ODOM_PARAM_SET:
+        if (allowConfig && length == sizeof(PayloadSysOdomParamSet))
+            handleSysOdomParamSet((const PayloadSysOdomParamSet *)payload);
+        break;
+
     // ---- DC motor commands (RUNNING only) ----
     case DC_ENABLE:
         if (length == sizeof(PayloadDCEnable))
@@ -1119,9 +1135,29 @@ void MessageCenter::handleSysDiagReq(const PayloadSysDiagReq *payload)
 void MessageCenter::handleSysOdomReset(const PayloadSysOdomReset *payload)
 {
     (void)payload;
-    RobotKinematics::reset(
-        dcMotors[ODOM_LEFT_MOTOR].getPosition(),
-        dcMotors[ODOM_RIGHT_MOTOR].getPosition());
+    int32_t leftTicks = 0;
+    int32_t rightTicks = 0;
+    getOdomMotorTicks(leftTicks, rightTicks);
+    RobotKinematics::reset(leftTicks, rightTicks);
+}
+
+void MessageCenter::handleSysOdomParamSet(const PayloadSysOdomParamSet *payload)
+{
+    if (payload->leftMotorId >= NUM_DC_MOTORS || payload->rightMotorId >= NUM_DC_MOTORS ||
+        payload->leftMotorId == payload->rightMotorId) {
+        return;
+    }
+
+    RobotKinematics::setParameters(
+        payload->wheelDiameterMm,
+        payload->wheelBaseMm,
+        payload->initialThetaDeg,
+        payload->leftMotorId,
+        payload->leftMotorDirInverted != 0,
+        payload->rightMotorId,
+        payload->rightMotorDirInverted != 0,
+        dcMotors[payload->leftMotorId].getPosition(),
+        dcMotors[payload->rightMotorId].getPosition());
 }
 
 void MessageCenter::handleDCPidReq(const PayloadDCPidReq *payload)
@@ -1606,11 +1642,13 @@ void MessageCenter::sendSensorIMU()
 
 void MessageCenter::sendSensorKinematics()
 {
+    const uint8_t leftMotorId = RobotKinematics::getLeftMotorId();
+    const uint8_t rightMotorId = RobotKinematics::getRightMotorId();
     RobotKinematics::update(
-        dcMotors[ODOM_LEFT_MOTOR].getPosition(),
-        dcMotors[ODOM_RIGHT_MOTOR].getPosition(),
-        dcMotors[ODOM_LEFT_MOTOR].getVelocity(),
-        dcMotors[ODOM_RIGHT_MOTOR].getVelocity());
+        dcMotors[leftMotorId].getPosition(),
+        dcMotors[rightMotorId].getPosition(),
+        dcMotors[leftMotorId].getVelocity(),
+        dcMotors[rightMotorId].getVelocity());
 
     PayloadSensorKinematics payload;
     payload.x = RobotKinematics::getX();

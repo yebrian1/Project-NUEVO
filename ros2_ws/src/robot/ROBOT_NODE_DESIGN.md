@@ -70,7 +70,12 @@ FSM/path-planner threads read it.
 | `get_state() → FirmwareState` | no | reads cached `/sys_state` |
 | `estop()` | yes | shorthand for `set_state(ESTOP)` |
 | `reset_estop()` | yes | shorthand for `set_state(IDLE)` |
-| `reset_odometry()` | no | publishes `/sys_odom_reset` |
+| `reset_odometry()` | no | publishes `/sys_odom_reset`; resets pose to `(0, 0, current initial theta)` |
+| `set_wheel_diameter_mm(mm)` | no | publishes `/sys_odom_param_set`; updates wheel diameter |
+| `set_wheel_base_mm(mm)` | no | publishes `/sys_odom_param_set`; updates wheel base |
+| `set_initial_theta(theta_deg)` | no | publishes `/sys_odom_param_set`; used on future odom resets |
+| `set_odom_left_motor(motor_id)` / `set_odom_right_motor(motor_id)` | no | select which DC motors represent the diff-drive wheels |
+| `set_odom_left_motor_dir_inverted(flag)` / `set_odom_right_motor_dir_inverted(flag)` | no | configure wheel-sign convention for odometry and high-level body motion |
 | `get_power() → SystemPower` | no | cached `/sys_power` |
 
 #### Pose / odometry
@@ -85,8 +90,8 @@ FSM/path-planner threads read it.
 
 | Method | Blocking | Notes |
 |---|---|---|
-| `set_velocity(linear, angular_deg_s)` | no | body-frame: linear in user-units/s, angular in degrees/s; firmware uses diff-drive mixing |
-| `set_left_wheel(motor_id)` / `set_right_wheel(motor_id)` | no | configure which DC motors are used by diff-drive helpers |
+| `set_velocity(linear, angular_deg_s)` | no | body-frame: linear in user-units/s, angular in degrees/s; robot API uses the current odom wheel mapping and inversion flags |
+| `set_left_wheel(motor_id)` / `set_right_wheel(motor_id)` | no | compatibility aliases for `set_odom_left_motor()` / `set_odom_right_motor()` |
 | `set_motor_velocity(motor_id, velocity)` | no | per-motor; velocity in user-units/s → ticks/s |
 | `stop()` | no | zero velocity on both drive motors; does NOT ESTOP |
 
@@ -95,6 +100,10 @@ Diff-drive mixing done by the API:
 left_mm_s  = linear_mm_s − angular_rad_s × wheel_base_mm / 2
 right_mm_s = linear_mm_s + angular_rad_s × wheel_base_mm / 2
 ```
+
+If an odom wheel direction is marked inverted, the corresponding high-level
+wheel command is negated before it is published. Raw `set_motor_velocity()`
+remains untouched.
 
 #### Differential drive — navigation (motion commands)
 
@@ -309,12 +318,15 @@ These are constructor defaults in `Robot` and should match `firmware/arduino/src
 |---|---|---|
 | `wheel_diameter_mm` | 74.0 | `WHEEL_DIAMETER_MM` |
 | `wheel_base_mm` | 333.0 | `WHEEL_BASE_MM` |
+| `initial_theta_deg` | 90.0 | `INITIAL_THETA` |
 | `encoder_ppr` | 1440 | `ENCODER_PPR × ENCODER_4X` |
 | Default left drive motor | 1 | `ODOM_LEFT_MOTOR + 1` |
 | Default right drive motor | 2 | `ODOM_RIGHT_MOTOR + 1` |
+| Default left wheel direction inverted | `False` | `ODOM_LEFT_MOTOR_DIR_INVERTED` |
+| Default right wheel direction inverted | `True` | `ODOM_RIGHT_MOTOR_DIR_INVERTED` |
 
-Student code can override the left/right wheel mapping at startup via
-`set_left_wheel()` / `set_right_wheel()` if the robot is wired differently.
+Student code can override wheel mapping and odometry geometry at startup via
+the `set_*` odometry-parameter helpers if the robot is wired differently.
 
 ---
 

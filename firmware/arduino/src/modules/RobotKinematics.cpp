@@ -3,7 +3,7 @@
  * @brief Differential-drive odometry implementation
  *
  * To adapt for a different drive model (e.g., Ackermann steering):
- *   1. Update the constants in RobotKinematics.h to match your geometry.
+ *   1. Update the runtime odometry parameters to match your geometry.
  *   2. Replace the update() body below with your kinematics equations.
  *      - reset() and the static members do not need to change.
  *      - The interface (getX, getY, getTheta, getVx, getVy, getVTheta) stays the same.
@@ -15,9 +15,13 @@
 
 namespace {
 constexpr float kPi = 3.14159265358979323846f;
-constexpr float kTwoPi = 2.0f * kPi;
-constexpr float kInitialThetaRad = INITIAL_THETA * kPi / 180.0f;
-}
+constexpr float kTicksPerRev[4] = {
+    (float)(ENCODER_PPR * ENCODER_1_MODE),
+    (float)(ENCODER_PPR * ENCODER_2_MODE),
+    (float)(ENCODER_PPR * ENCODER_3_MODE),
+    (float)(ENCODER_PPR * ENCODER_4_MODE)
+};
+} // namespace
 
 // ============================================================================
 // STATIC MEMBER INITIALIZATION
@@ -25,10 +29,17 @@ constexpr float kInitialThetaRad = INITIAL_THETA * kPi / 180.0f;
 
 float   RobotKinematics::x_             = 0.0f;
 float   RobotKinematics::y_             = 0.0f;
-float   RobotKinematics::theta_         = kInitialThetaRad;
+float   RobotKinematics::theta_         = INITIAL_THETA * kPi / 180.0f;
 float   RobotKinematics::vx_            = 0.0f;
 float   RobotKinematics::vy_            = 0.0f;
 float   RobotKinematics::vTheta_        = 0.0f;
+float   RobotKinematics::wheelDiameterMm_ = WHEEL_DIAMETER_MM;
+float   RobotKinematics::wheelBaseMm_     = WHEEL_BASE_MM;
+float   RobotKinematics::initialThetaRad_ = INITIAL_THETA * kPi / 180.0f;
+uint8_t RobotKinematics::leftMotorId_     = ODOM_LEFT_MOTOR;
+uint8_t RobotKinematics::rightMotorId_    = ODOM_RIGHT_MOTOR;
+bool    RobotKinematics::leftMotorDirInverted_ = (ODOM_LEFT_MOTOR_DIR_INVERTED != 0);
+bool    RobotKinematics::rightMotorDirInverted_ = (ODOM_RIGHT_MOTOR_DIR_INVERTED != 0);
 int32_t RobotKinematics::prevLeftTicks_ = 0;
 int32_t RobotKinematics::prevRightTicks_= 0;
 
@@ -39,26 +50,39 @@ int32_t RobotKinematics::prevRightTicks_= 0;
 static_assert(ODOM_LEFT_MOTOR  < NUM_DC_MOTORS, "ODOM_LEFT_MOTOR must be less than NUM_DC_MOTORS");
 static_assert(ODOM_RIGHT_MOTOR < NUM_DC_MOTORS, "ODOM_RIGHT_MOTOR must be less than NUM_DC_MOTORS");
 static_assert(ODOM_LEFT_MOTOR  != ODOM_RIGHT_MOTOR, "ODOM_LEFT_MOTOR and ODOM_RIGHT_MOTOR must be different");
-
-// ============================================================================
-// mm-per-tick conversion factors (computed once at compile time)
-// ============================================================================
-
-constexpr float kMmPerTick[4] = {
-    (kPi * WHEEL_DIAMETER_MM) / (float)(ENCODER_PPR * ENCODER_1_MODE),
-    (kPi * WHEEL_DIAMETER_MM) / (float)(ENCODER_PPR * ENCODER_2_MODE),
-    (kPi * WHEEL_DIAMETER_MM) / (float)(ENCODER_PPR * ENCODER_3_MODE),
-    (kPi * WHEEL_DIAMETER_MM) / (float)(ENCODER_PPR * ENCODER_4_MODE)
-};
+static_assert(NUM_DC_MOTORS == 4, "RobotKinematics assumes four DC motor channels");
 
 // ============================================================================
 // PUBLIC API
 // ============================================================================
 
+bool RobotKinematics::setParameters(float wheelDiameterMm, float wheelBaseMm, float initialThetaDeg,
+                                    uint8_t leftMotorId, bool leftMotorDirInverted,
+                                    uint8_t rightMotorId, bool rightMotorDirInverted,
+                                    int32_t leftTicks, int32_t rightTicks) {
+    if (!isfinite(wheelDiameterMm) || !isfinite(wheelBaseMm) || !isfinite(initialThetaDeg) ||
+        wheelDiameterMm <= 0.0f || wheelBaseMm <= 0.0f) {
+        return false;
+    }
+    if (leftMotorId >= NUM_DC_MOTORS || rightMotorId >= NUM_DC_MOTORS || leftMotorId == rightMotorId) {
+        return false;
+    }
+
+    wheelDiameterMm_ = wheelDiameterMm;
+    wheelBaseMm_ = wheelBaseMm;
+    initialThetaRad_ = initialThetaDeg * kPi / 180.0f;
+    leftMotorId_ = leftMotorId;
+    rightMotorId_ = rightMotorId;
+    leftMotorDirInverted_ = leftMotorDirInverted;
+    rightMotorDirInverted_ = rightMotorDirInverted;
+    reseed(leftTicks, rightTicks);
+    return true;
+}
+
 void RobotKinematics::reset(int32_t leftTicks, int32_t rightTicks) {
     x_              = 0.0f;
     y_              = 0.0f;
-    theta_          = kInitialThetaRad;
+    theta_          = initialThetaRad_;
     vx_             = 0.0f;
     vy_             = 0.0f;
     vTheta_         = 0.0f;
@@ -79,12 +103,12 @@ void RobotKinematics::update(int32_t leftTicks, int32_t rightTicks,
 {
     // ---- Odometry integration ----
     int32_t dL = leftTicks  - prevLeftTicks_;
-    if (ODOM_LEFT_MOTOR_DIR_INVERTED){
+    if (leftMotorDirInverted_) {
         dL = -dL;
     }
 
     int32_t dR = rightTicks - prevRightTicks_;
-    if (ODOM_RIGHT_MOTOR_DIR_INVERTED){
+    if (rightMotorDirInverted_) {
         dR = -dR;
     }
 
@@ -92,10 +116,10 @@ void RobotKinematics::update(int32_t leftTicks, int32_t rightTicks,
     prevRightTicks_ = rightTicks;
 
     if (dL != 0 || dR != 0) {
-        float dLeft   = (float)dL * kMmPerTick[ODOM_LEFT_MOTOR];
-        float dRight  = (float)dR * kMmPerTick[ODOM_RIGHT_MOTOR];
+        float dLeft   = (float)dL * mmPerTickForMotor(leftMotorId_);
+        float dRight  = (float)dR * mmPerTickForMotor(rightMotorId_);
         float dCenter = (dLeft + dRight) * 0.5f;
-        float dTheta  = (dRight - dLeft) / WHEEL_BASE_MM;
+        float dTheta  = (dRight - dLeft) / wheelBaseMm_;
 
         // Midpoint heading integration (reduces discretization error)
         float headingMid = theta_ + dTheta * 0.5f;
@@ -105,17 +129,22 @@ void RobotKinematics::update(int32_t leftTicks, int32_t rightTicks,
     }
 
     // ---- Instantaneous body-frame velocities ----
-    if (ODOM_LEFT_MOTOR_DIR_INVERTED) {
+    if (leftMotorDirInverted_) {
         leftVelTps = -leftVelTps;
     }
-    if (ODOM_RIGHT_MOTOR_DIR_INVERTED) {
+    if (rightMotorDirInverted_) {
         rightVelTps = -rightVelTps;
     }
 
-    float vLeft  = leftVelTps  * kMmPerTick[ODOM_LEFT_MOTOR];
-    float vRight = rightVelTps * kMmPerTick[ODOM_RIGHT_MOTOR];
+    float vLeft  = leftVelTps  * mmPerTickForMotor(leftMotorId_);
+    float vRight = rightVelTps * mmPerTickForMotor(rightMotorId_);
 
     vx_     = (vLeft + vRight) * 0.5f;
     vy_     = 0.0f;  // Always 0 for differential drive
-    vTheta_ = (vRight - vLeft) / WHEEL_BASE_MM;
+    vTheta_ = (vRight - vLeft) / wheelBaseMm_;
+}
+
+float RobotKinematics::mmPerTickForMotor(uint8_t motorId)
+{
+    return (kPi * wheelDiameterMm_) / kTicksPerRev[motorId];
 }

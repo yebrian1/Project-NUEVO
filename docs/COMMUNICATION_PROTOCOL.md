@@ -450,6 +450,26 @@ Dedicated command to reset odometry.
 
 This is intentionally split out because it is an action, not configuration.
 
+#### `SYS_ODOM_PARAM_SET` ↓
+
+Set mutable odometry and differential-drive kinematics parameters.
+
+This command updates the runtime odometry model without overwriting the
+current pose. It is configuration, so firmware accepts it only in `IDLE`.
+
+Fields:
+
+- `wheelDiameterMm`
+- `wheelBaseMm`
+- `initialThetaDeg`
+- `leftMotorId`
+- `leftMotorDirInverted`
+- `rightMotorId`
+- `rightMotorDirInverted`
+
+`initialThetaDeg` is the heading used by future `SYS_ODOM_RESET` actions.
+It does not directly rewrite the live pose.
+
 #### `SYS_DIAG_REQ / SYS_DIAG_RSP`
 
 Query-only engineering diagnostics.

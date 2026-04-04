@@ -563,9 +563,11 @@ void taskMotors() {
  */
 void taskMotorFeedback() {
   bool odomNeedsReseed = false;
+  const uint8_t leftMotorId = RobotKinematics::getLeftMotorId();
+  const uint8_t rightMotorId = RobotKinematics::getRightMotorId();
   for (uint8_t i = 0; i < NUM_DC_MOTORS; i++) {
     dcMotors[i].refreshFeedback();
-    if ((i == ODOM_LEFT_MOTOR || i == ODOM_RIGHT_MOTOR) &&
+    if ((i == leftMotorId || i == rightMotorId) &&
         dcMotors[i].consumeEncoderResetEvent()) {
       odomNeedsReseed = true;
     }
@@ -573,8 +575,8 @@ void taskMotorFeedback() {
 
   if (odomNeedsReseed) {
     RobotKinematics::reseed(
-      dcMotors[ODOM_LEFT_MOTOR].getPosition(),
-      dcMotors[ODOM_RIGHT_MOTOR].getPosition());
+      dcMotors[leftMotorId].getPosition(),
+      dcMotors[rightMotorId].getPosition());
   }
 }
 

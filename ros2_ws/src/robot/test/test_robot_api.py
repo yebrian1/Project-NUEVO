@@ -103,6 +103,7 @@ def _install_fake_robot_dependencies() -> None:
         "StepHome",
         "StepMove",
         "StepStateAll",
+        "SysOdomParamSet",
         "SysOdomReset",
         "SystemPower",
         "SystemState",
@@ -150,6 +151,43 @@ class RobotApiTests(unittest.TestCase):
 
         published = self.node.publishers["/dc_set_velocity"].published
         self.assertEqual([msg.motor_number for msg in published], [3, 4])
+
+    def test_high_level_velocity_respects_runtime_wheel_direction_flags(self) -> None:
+        self.robot.set_odometry_parameters(
+            left_motor_dir_inverted=False,
+            right_motor_dir_inverted=False,
+        )
+        self.node.publishers["/dc_set_velocity"].published.clear()
+        self.robot.set_velocity(100.0, 0.0)
+        both_forward = self.node.publishers["/dc_set_velocity"].published
+        self.assertGreater(both_forward[0].target_ticks, 0)
+        self.assertGreater(both_forward[1].target_ticks, 0)
+
+        self.robot.set_odometry_parameters(
+            left_motor_dir_inverted=True,
+            right_motor_dir_inverted=False,
+        )
+        self.node.publishers["/dc_set_velocity"].published.clear()
+        self.robot.set_velocity(100.0, 0.0)
+        mixed = self.node.publishers["/dc_set_velocity"].published
+        self.assertLess(mixed[0].target_ticks, 0)
+        self.assertGreater(mixed[1].target_ticks, 0)
+
+    def test_set_wheel_diameter_publishes_full_odom_param_snapshot(self) -> None:
+        self.robot.set_wheel_diameter_mm(80.0)
+
+        msg = self.node.publishers["/sys_odom_param_set"].published[-1]
+        self.assertEqual(msg.wheel_diameter_mm, 80.0)
+        self.assertEqual(msg.wheel_base_mm, 333.0)
+        self.assertEqual(msg.initial_theta_deg, 90.0)
+        self.assertEqual(msg.left_motor_number, 1)
+        self.assertFalse(msg.left_motor_dir_inverted)
+        self.assertEqual(msg.right_motor_number, 2)
+        self.assertTrue(msg.right_motor_dir_inverted)
+
+    def test_duplicate_odom_motor_pair_fails_fast(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must be different"):
+            self.robot.set_odometry_parameters(left_motor_id=2, right_motor_id=2)
 
     def test_zero_brightness_defaults_to_led_off_mode(self) -> None:
         self.robot.set_led(1, 0)

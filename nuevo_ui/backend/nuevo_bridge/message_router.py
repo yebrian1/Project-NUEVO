@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
+import math
 import time
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -501,6 +502,36 @@ class MessageRouter:
         payload.flags = int(data.get("flags", 0))
         return payload
 
+    def _encode_sys_odom_param_set(self, data: dict) -> Optional[ctypes.Structure]:
+        wheel_diameter_mm = float(data["wheelDiameterMm"])
+        wheel_base_mm = float(data["wheelBaseMm"])
+        initial_theta_deg = float(data.get("initialThetaDeg", 0.0))
+        left_motor_number = int(data["leftMotorNumber"])
+        right_motor_number = int(data["rightMotorNumber"])
+
+        if not math.isfinite(wheel_diameter_mm) or wheel_diameter_mm <= 0.0:
+            return None
+        if not math.isfinite(wheel_base_mm) or wheel_base_mm <= 0.0:
+            return None
+        if not math.isfinite(initial_theta_deg):
+            return None
+        if not 1 <= left_motor_number <= TLV_MAX_DC_MOTORS:
+            return None
+        if not 1 <= right_motor_number <= TLV_MAX_DC_MOTORS:
+            return None
+        if left_motor_number == right_motor_number:
+            return None
+
+        payload = PayloadSysOdomParamSet()
+        payload.wheelDiameterMm = wheel_diameter_mm
+        payload.wheelBaseMm = wheel_base_mm
+        payload.initialThetaDeg = initial_theta_deg
+        payload.leftMotorId = left_motor_number - 1
+        payload.leftMotorDirInverted = 1 if bool(data.get("leftMotorDirInverted", False)) else 0
+        payload.rightMotorId = right_motor_number - 1
+        payload.rightMotorDirInverted = 1 if bool(data.get("rightMotorDirInverted", False)) else 0
+        return payload
+
     def _encode_dc_enable(self, data: dict) -> Optional[ctypes.Structure]:
         motor_number = int(data["motorNumber"])
         if not 1 <= motor_number <= TLV_MAX_DC_MOTORS:
@@ -689,6 +720,7 @@ class MessageRouter:
             "sys_diag_req": (SYS_DIAG_REQ, self._encode_sys_diag_req),
             "sys_config_set": (SYS_CONFIG_SET, self._encode_sys_config_set),
             "sys_odom_reset": (SYS_ODOM_RESET, self._encode_sys_odom_reset),
+            "sys_odom_param_set": (SYS_ODOM_PARAM_SET, self._encode_sys_odom_param_set),
             "dc_enable": (DC_ENABLE, self._encode_dc_enable),
             "dc_set_position": (DC_SET_POSITION, self._encode_dc_set_position),
             "dc_set_velocity": (DC_SET_VELOCITY, self._encode_dc_set_velocity),

@@ -36,6 +36,7 @@ from bridge_interfaces.msg import (
     StepStateAll,
     SysCommand,
     SysConfigSet,
+    SysOdomParamSet,
     SysOdomReset,
     SystemConfig,
     SystemDiag,
@@ -76,6 +77,7 @@ class BridgeNode(Node):
 
         self.create_subscription(SysCommand, "/sys_cmd", self._on_sys_cmd, qos)
         self.create_subscription(SysConfigSet, "/sys_config_set", self._on_sys_config_set, qos)
+        self.create_subscription(SysOdomParamSet, "/sys_odom_param_set", self._on_sys_odom_param_set, qos)
         self.create_subscription(SysOdomReset, "/sys_odom_reset", self._on_sys_odom_reset, qos)
         self.create_subscription(DCEnable, "/dc_enable", self._on_dc_enable, qos)
         self.create_subscription(DCSetPosition, "/dc_set_position", self._on_dc_set_position, qos)
@@ -129,6 +131,17 @@ class BridgeNode(Node):
 
     def _on_sys_odom_reset(self, msg: SysOdomReset) -> None:
         self._send("sys_odom_reset", {"flags": int(msg.flags)})
+
+    def _on_sys_odom_param_set(self, msg: SysOdomParamSet) -> None:
+        self._send("sys_odom_param_set", {
+            "wheelDiameterMm": float(msg.wheel_diameter_mm),
+            "wheelBaseMm": float(msg.wheel_base_mm),
+            "initialThetaDeg": float(msg.initial_theta_deg),
+            "leftMotorNumber": int(msg.left_motor_number),
+            "leftMotorDirInverted": bool(msg.left_motor_dir_inverted),
+            "rightMotorNumber": int(msg.right_motor_number),
+            "rightMotorDirInverted": bool(msg.right_motor_dir_inverted),
+        })
 
     def _on_dc_enable(self, msg: DCEnable) -> None:
         self._send("dc_enable", {"motorNumber": int(msg.motor_number), "mode": int(msg.mode)})

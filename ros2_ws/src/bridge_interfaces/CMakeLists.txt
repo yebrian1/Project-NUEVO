@@ -27,6 +27,7 @@ set(msg_files
   "msg/IOOutputState.msg"
   # Raw bridge commands
   "msg/SysConfigSet.msg"
+  "msg/SysOdomParamSet.msg"
   "msg/SysOdomReset.msg"
   "msg/DCEnable.msg"
   "msg/DCSetPosition.msg"

@@ -1,6 +1,7 @@
 import unittest
 
 from nuevo_bridge.runtime import BridgeRuntime
+from nuevo_bridge.TLV_TypeDefs import SYS_ODOM_PARAM_SET
 from nuevo_bridge.webapp import create_app
 
 
@@ -70,6 +71,33 @@ class BridgeRuntimeTests(unittest.IsolatedAsyncioTestCase):
             ok = runtime.handle_command("dc_enable", {"motorNumber": 0, "mode": 2})
             self.assertFalse(ok)
             self.assertIn("validation failed", runtime.last_command_error)
+        finally:
+            await runtime.stop()
+
+    async def test_odom_param_set_reaches_wire_with_zero_based_motor_ids(self):
+        runtime = BridgeRuntime(serial_manager_factory=_FakeSerialManager)
+
+        await runtime.start()
+        try:
+            ok = runtime.handle_command("sys_odom_param_set", {
+                "wheelDiameterMm": 80.0,
+                "wheelBaseMm": 300.0,
+                "initialThetaDeg": 45.0,
+                "leftMotorNumber": 2,
+                "leftMotorDirInverted": True,
+                "rightMotorNumber": 4,
+                "rightMotorDirInverted": False,
+            })
+            self.assertTrue(ok)
+            tlv_type, payload = runtime.serial_manager.sent[-1]
+            self.assertEqual(tlv_type, SYS_ODOM_PARAM_SET)
+            self.assertEqual(payload.leftMotorId, 1)
+            self.assertEqual(payload.rightMotorId, 3)
+            self.assertEqual(payload.leftMotorDirInverted, 1)
+            self.assertEqual(payload.rightMotorDirInverted, 0)
+            self.assertEqual(payload.wheelDiameterMm, 80.0)
+            self.assertEqual(payload.wheelBaseMm, 300.0)
+            self.assertEqual(payload.initialThetaDeg, 45.0)
         finally:
             await runtime.stop()
 

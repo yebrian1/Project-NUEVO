@@ -13,6 +13,7 @@
     "SYS_DIAG_REQ":          10,
     "SYS_DIAG_RSP":          11,
     "SYS_ODOM_RESET":        12,
+    "SYS_ODOM_PARAM_SET":    13,
 
     "DC_ENABLE":             16,
     "DC_SET_POSITION":       17,
@@ -61,6 +62,7 @@
     "SYS_DIAG_REQ":          "RPi → Arduino: Request engineering diagnostics snapshot.",
     "SYS_DIAG_RSP":          "Arduino → RPi: Engineering diagnostics snapshot.",
     "SYS_ODOM_RESET":        "RPi → Arduino: Reset wheel odometry state.",
+    "SYS_ODOM_PARAM_SET":    "RPi → Arduino: Set mutable odometry and differential-drive kinematics parameters.",
 
     "DC_ENABLE":             "RPi → Arduino: Enable/disable a DC motor with mode selection.",
     "DC_SET_POSITION":       "RPi → Arduino: Set absolute target position (encoder ticks).",

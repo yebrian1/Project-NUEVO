@@ -38,7 +38,7 @@ from .config import (
 from .payloads import (
     PayloadHeartbeat, PayloadSysCmd,
     PayloadSysState, PayloadSysInfoRsp, PayloadSysConfigRsp, PayloadSysConfigSet,
-    PayloadSysPower, PayloadSysDiagRsp, PayloadSysOdomReset,
+    PayloadSysPower, PayloadSysDiagRsp, PayloadSysOdomReset, PayloadSysOdomParamSet,
     PayloadDCStateAll, PayloadDCPidReq, PayloadDCPidRsp, PayloadDCResetPosition, PayloadDCHome,
     PayloadStepStateAll, PayloadStepConfigReq, PayloadStepConfigRsp,
     PayloadServoStateAll, PayloadSensorIMU, PayloadSensorKinematics,
@@ -51,7 +51,7 @@ from .TLV_TypeDefs import (
     SYS_CONFIG_REQ, SYS_CONFIG_RSP, SYS_CONFIG_SET,
     SYS_POWER,
     SYS_DIAG_REQ, SYS_DIAG_RSP,
-    SYS_ODOM_RESET,
+    SYS_ODOM_RESET, SYS_ODOM_PARAM_SET,
     DC_PID_REQ, DC_PID_RSP, DC_PID_SET,
     DC_ENABLE, DC_SET_VELOCITY, DC_SET_POSITION, DC_SET_PWM, DC_RESET_POSITION, DC_HOME,
     DC_STATE_ALL,
@@ -440,10 +440,14 @@ _STEP_HOMING  = 4
 _STEP_FAULT   = 5
 
 # Simulated wheel geometry (matches default firmware config)
-_WHEEL_DIAMETER_MM = 65.0
-_WHEEL_BASE_MM     = 150.0
+_WHEEL_DIAMETER_MM = 74.0
+_WHEEL_BASE_MM     = 333.0
+_INITIAL_THETA_DEG = 90.0
+_ODOM_LEFT_MOTOR   = 0
+_ODOM_RIGHT_MOTOR  = 1
+_ODOM_LEFT_DIR_INVERTED = False
+_ODOM_RIGHT_DIR_INVERTED = True
 _TICKS_PER_REV     = 1440           # encoder PPR × gear × 4 (quadrature)
-_MM_PER_TICK       = (_WHEEL_DIAMETER_MM * math.pi) / _TICKS_PER_REV
 
 
 class _DC:
@@ -594,6 +598,11 @@ class _ArduinoSim:
 
         self.wheel_diameter_mm = _WHEEL_DIAMETER_MM
         self.wheel_base_mm     = _WHEEL_BASE_MM
+        self.initial_theta_deg = _INITIAL_THETA_DEG
+        self.odom_left_motor_id = _ODOM_LEFT_MOTOR
+        self.odom_right_motor_id = _ODOM_RIGHT_MOTOR
+        self.odom_left_motor_dir_inverted = _ODOM_LEFT_DIR_INVERTED
+        self.odom_right_motor_dir_inverted = _ODOM_RIGHT_DIR_INVERTED
         self.motor_dir_mask    = 0
         self.neopixel_count    = 1
         self.heartbeat_timeout_ms = 500
@@ -616,7 +625,7 @@ class _ArduinoSim:
 
         self.odom_x     = 0.0
         self.odom_y     = 0.0
-        self.odom_theta = 0.0
+        self.odom_theta = math.radians(self.initial_theta_deg)
 
         self.battery_mv  = float(random.randint(12400, 12800))
         self.rail5v_mv   = float(random.randint(4990, 5020))
@@ -629,6 +638,20 @@ class _ArduinoSim:
 
         self._init_timer = 0.0
         self._last_update = time.time()
+
+    def _mm_per_tick(self) -> float:
+        return (self.wheel_diameter_mm * math.pi) / _TICKS_PER_REV
+
+    def _wheel_velocity_mm_s(self, motor_id: int, inverted: bool) -> float:
+        velocity = self.dc[motor_id].velocity
+        if inverted:
+            velocity = -velocity
+        return velocity * self._mm_per_tick()
+
+    def reset_odometry_pose(self) -> None:
+        self.odom_x = 0.0
+        self.odom_y = 0.0
+        self.odom_theta = math.radians(self.initial_theta_deg)
 
     def receive_command(self):
         self.last_rx_ms = 0
@@ -673,9 +696,8 @@ class _ArduinoSim:
             s.update(dt)
 
     def _update_kinematics(self, dt):
-        mm_per_tick = _MM_PER_TICK
-        v_left  = self.dc[0].velocity * mm_per_tick
-        v_right = self.dc[1].velocity * mm_per_tick
+        v_left = self._wheel_velocity_mm_s(self.odom_left_motor_id, self.odom_left_motor_dir_inverted)
+        v_right = self._wheel_velocity_mm_s(self.odom_right_motor_id, self.odom_right_motor_dir_inverted)
         v_linear  = (v_left + v_right) * 0.5
         v_angular = (v_right - v_left) / self.wheel_base_mm
         self.odom_theta += v_angular * dt
@@ -683,9 +705,8 @@ class _ArduinoSim:
         self.odom_y     += v_linear * math.sin(self.odom_theta) * dt
 
     def _update_imu(self, dt):
-        mm_per_tick = _MM_PER_TICK
-        v_left  = self.dc[0].velocity * mm_per_tick
-        v_right = self.dc[1].velocity * mm_per_tick
+        v_left = self._wheel_velocity_mm_s(self.odom_left_motor_id, self.odom_left_motor_dir_inverted)
+        v_right = self._wheel_velocity_mm_s(self.odom_right_motor_id, self.odom_right_motor_dir_inverted)
         v_angular = (v_right - v_left) / self.wheel_base_mm
         # Slow continuous yaw rotation (0.35 rad/s ≈ full turn every ~18 s)
         self.imu_yaw += (0.35 + v_angular) * dt + random.gauss(0, 0.0005)
@@ -821,8 +842,20 @@ class MockSerialManager:
             self._gen_sys_config_rsp()
 
         elif tlv_type == SYS_ODOM_RESET:
-            a.odom_x = a.odom_y = a.odom_theta = 0.0
+            a.reset_odometry_pose()
             print("[Mock] Odometry reset")
+
+        elif tlv_type == SYS_ODOM_PARAM_SET:
+            if a.state == _SYS_IDLE and payload.leftMotorId != payload.rightMotorId and \
+               0 <= payload.leftMotorId < 4 and 0 <= payload.rightMotorId < 4 and \
+               payload.wheelDiameterMm > 0.0 and payload.wheelBaseMm > 0.0:
+                a.wheel_diameter_mm = payload.wheelDiameterMm
+                a.wheel_base_mm = payload.wheelBaseMm
+                a.initial_theta_deg = payload.initialThetaDeg
+                a.odom_left_motor_id = payload.leftMotorId
+                a.odom_right_motor_id = payload.rightMotorId
+                a.odom_left_motor_dir_inverted = bool(payload.leftMotorDirInverted)
+                a.odom_right_motor_dir_inverted = bool(payload.rightMotorDirInverted)
 
         elif tlv_type == DC_PID_REQ:
             self._gen_dc_pid_rsp(payload.motorId, payload.loopType)
@@ -1092,9 +1125,8 @@ class MockSerialManager:
 
         qw, qx, qy, qz = a._euler_to_quat(a.imu_yaw, a.imu_pitch, a.imu_roll)
 
-        mm_per_tick = _MM_PER_TICK
-        v_left  = a.dc[0].velocity * mm_per_tick
-        v_right = a.dc[1].velocity * mm_per_tick
+        v_left = a._wheel_velocity_mm_s(a.odom_left_motor_id, a.odom_left_motor_dir_inverted)
+        v_right = a._wheel_velocity_mm_s(a.odom_right_motor_id, a.odom_right_motor_dir_inverted)
 
         # Angular rates (rad/s) — derivative of sinusoids
         pitch_rate = PITCH_AMP * PITCH_W * math.cos(PITCH_W * t)          # rad/s
@@ -1132,9 +1164,8 @@ class MockSerialManager:
 
     def _gen_sensor_kinematics(self):
         a = self.arduino
-        mm_per_tick = _MM_PER_TICK
-        v_left  = a.dc[0].velocity * mm_per_tick
-        v_right = a.dc[1].velocity * mm_per_tick
+        v_left = a._wheel_velocity_mm_s(a.odom_left_motor_id, a.odom_left_motor_dir_inverted)
+        v_right = a._wheel_velocity_mm_s(a.odom_right_motor_id, a.odom_right_motor_dir_inverted)
         v_lin   = (v_left + v_right) * 0.5
         v_ang   = (v_right - v_left) / a.wheel_base_mm
 

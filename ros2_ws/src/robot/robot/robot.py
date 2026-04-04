@@ -29,6 +29,7 @@ from bridge_interfaces.msg import (
     StepHome,
     StepMove,
     StepStateAll,
+    SysOdomParamSet,
     SysOdomReset,
     SystemPower,
     SystemState,
@@ -122,13 +123,17 @@ class Robot:
         ENCODER_PPR       = 1440  (4× mode)
         DEFAULT_LEFT_WHEEL_MOTOR  = 1
         DEFAULT_RIGHT_WHEEL_MOTOR = 2
+        INITIAL_THETA_DEG = 90.0
     """
 
     WHEEL_DIAMETER_MM: float = 74.0
     WHEEL_BASE_MM:     float = 333.0
     ENCODER_PPR:       int   = 1440
+    INITIAL_THETA_DEG: float = 90.0
     DEFAULT_LEFT_WHEEL_MOTOR:  int = int(Motor.DC_M1)
     DEFAULT_RIGHT_WHEEL_MOTOR: int = int(Motor.DC_M2)
+    DEFAULT_LEFT_WHEEL_DIR_INVERTED: bool = False
+    DEFAULT_RIGHT_WHEEL_DIR_INVERTED: bool = True
 
     # Servo pulse range (standard hobby servo)
     _SERVO_MIN_US: int = 1000
@@ -148,8 +153,11 @@ class Robot:
         self._wheel_base       = wheel_base_mm
         self._encoder_ppr      = encoder_ppr
         self._ticks_per_mm     = encoder_ppr / (math.pi * wheel_diameter_mm)
+        self._initial_theta_deg = self.INITIAL_THETA_DEG
         self._left_wheel_motor = self.DEFAULT_LEFT_WHEEL_MOTOR
         self._right_wheel_motor = self.DEFAULT_RIGHT_WHEEL_MOTOR
+        self._left_wheel_dir_inverted = self.DEFAULT_LEFT_WHEEL_DIR_INVERTED
+        self._right_wheel_dir_inverted = self.DEFAULT_RIGHT_WHEEL_DIR_INVERTED
         self._lock             = threading.Lock()
 
         # ── Cached firmware state ─────────────────────────────────────────────
@@ -194,6 +202,7 @@ class Robot:
         self._srv_set_pub  = node.create_publisher(ServoSet,       '/servo_set',        10)
         self._led_pub      = node.create_publisher(IOSetLed,       '/io_set_led',       10)
         self._neo_pub      = node.create_publisher(IOSetNeopixel,  '/io_set_neopixel',  10)
+        self._odom_param_pub = node.create_publisher(SysOdomParamSet, '/sys_odom_param_set', 10)
         self._odom_pub     = node.create_publisher(SysOdomReset,   '/sys_odom_reset',   10)
 
         # ── Subscriptions ─────────────────────────────────────────────────────
@@ -307,10 +316,72 @@ class Robot:
         return self.set_state(FirmwareState.IDLE)
 
     def reset_odometry(self) -> None:
-        """Zero the firmware odometry counters."""
+        """Reset firmware odometry pose to (0, 0, current initial theta)."""
         msg = SysOdomReset()
         msg.flags = 0
         self._odom_pub.publish(msg)
+
+    def set_wheel_diameter_mm(self, wheel_diameter_mm: float) -> None:
+        """Update wheel diameter for firmware odometry and robot-side motion conversion."""
+        self._update_odometry_params(wheel_diameter_mm=wheel_diameter_mm)
+
+    def set_wheel_base_mm(self, wheel_base_mm: float) -> None:
+        """Update wheel base for firmware odometry and robot-side diff-drive mixing."""
+        self._update_odometry_params(wheel_base_mm=wheel_base_mm)
+
+    def set_initial_theta(self, theta_deg: float) -> None:
+        """
+        Update the heading used by future odometry resets.
+
+        This does not overwrite the current live pose. Call reset_odometry()
+        after setting it if you want the new heading applied immediately.
+        """
+        self._update_odometry_params(initial_theta_deg=theta_deg)
+
+    def set_odom_left_motor(self, motor_id: int) -> None:
+        """Select which DC motor is treated as the left wheel for odometry and body motion."""
+        self._update_odometry_params(left_wheel_motor=motor_id)
+
+    def set_odom_right_motor(self, motor_id: int) -> None:
+        """Select which DC motor is treated as the right wheel for odometry and body motion."""
+        self._update_odometry_params(right_wheel_motor=motor_id)
+
+    def set_odom_motors(self, left_motor_id: int, right_motor_id: int) -> None:
+        """Atomically configure both odometry wheel motors."""
+        self._update_odometry_params(
+            left_wheel_motor=left_motor_id,
+            right_wheel_motor=right_motor_id,
+        )
+
+    def set_odom_left_motor_dir_inverted(self, inverted: bool) -> None:
+        """Configure whether positive left-wheel odometry counts mean reverse motion."""
+        self._update_odometry_params(left_wheel_dir_inverted=inverted)
+
+    def set_odom_right_motor_dir_inverted(self, inverted: bool) -> None:
+        """Configure whether positive right-wheel odometry counts mean reverse motion."""
+        self._update_odometry_params(right_wheel_dir_inverted=inverted)
+
+    def set_odometry_parameters(
+        self,
+        *,
+        wheel_diameter_mm: float | None = None,
+        wheel_base_mm: float | None = None,
+        initial_theta_deg: float | None = None,
+        left_motor_id: int | None = None,
+        left_motor_dir_inverted: bool | None = None,
+        right_motor_id: int | None = None,
+        right_motor_dir_inverted: bool | None = None,
+    ) -> None:
+        """Publish a full odometry-parameter snapshot to firmware in one call."""
+        self._update_odometry_params(
+            wheel_diameter_mm=wheel_diameter_mm,
+            wheel_base_mm=wheel_base_mm,
+            initial_theta_deg=initial_theta_deg,
+            left_wheel_motor=left_motor_id,
+            left_wheel_dir_inverted=left_motor_dir_inverted,
+            right_wheel_motor=right_motor_id,
+            right_wheel_dir_inverted=right_motor_dir_inverted,
+        )
 
     def get_power(self) -> SystemPower:
         """Return cached power state (battery_mv, rail_5v_mv, servo_rail_mv)."""
@@ -367,17 +438,16 @@ class Robot:
         self._send_motor_velocity_mm(self._right_wheel_motor, 0.0)
 
     def set_left_wheel(self, motor_id: int) -> None:
-        """Configure which DC motor drives the left wheel for diff-drive commands."""
-        self._left_wheel_motor = self._require_id("motor_id", motor_id, 1, 4)
+        """Alias for set_odom_left_motor()."""
+        self.set_odom_left_motor(motor_id)
 
     def set_right_wheel(self, motor_id: int) -> None:
-        """Configure which DC motor drives the right wheel for diff-drive commands."""
-        self._right_wheel_motor = self._require_id("motor_id", motor_id, 1, 4)
+        """Alias for set_odom_right_motor()."""
+        self.set_odom_right_motor(motor_id)
 
     def set_drive_wheels(self, left_motor_id: int, right_motor_id: int) -> None:
-        """Configure both drive-wheel motors for diff-drive commands."""
-        self.set_left_wheel(left_motor_id)
-        self.set_right_wheel(right_motor_id)
+        """Alias for set_odom_motors()."""
+        self.set_odom_motors(left_motor_id, right_motor_id)
 
     def get_left_wheel(self) -> int:
         return self._left_wheel_motor
@@ -1015,11 +1085,100 @@ class Robot:
             valid = ", ".join(f"{member.name}={int(member)}" for member in enum_type)
             raise ValueError(f"{name} must be one of: {valid}") from exc
 
+    @staticmethod
+    def _require_positive_float(name: str, value: float) -> float:
+        value = float(value)
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError(f"{name} must be a finite positive number, got {value}")
+        return value
+
+    @staticmethod
+    def _require_finite_float(name: str, value: float) -> float:
+        value = float(value)
+        if not math.isfinite(value):
+            raise ValueError(f"{name} must be finite, got {value}")
+        return value
+
+    def _update_odometry_params(
+        self,
+        *,
+        wheel_diameter_mm: float | None = None,
+        wheel_base_mm: float | None = None,
+        initial_theta_deg: float | None = None,
+        left_wheel_motor: int | None = None,
+        left_wheel_dir_inverted: bool | None = None,
+        right_wheel_motor: int | None = None,
+        right_wheel_dir_inverted: bool | None = None,
+    ) -> None:
+        with self._lock:
+            next_wheel_diameter = self._wheel_diameter if wheel_diameter_mm is None else \
+                self._require_positive_float("wheel_diameter_mm", wheel_diameter_mm)
+            next_wheel_base = self._wheel_base if wheel_base_mm is None else \
+                self._require_positive_float("wheel_base_mm", wheel_base_mm)
+            next_initial_theta = self._initial_theta_deg if initial_theta_deg is None else \
+                self._require_finite_float("initial_theta_deg", initial_theta_deg)
+            next_left_motor = self._left_wheel_motor if left_wheel_motor is None else \
+                self._require_id("left_motor_id", left_wheel_motor, 1, 4)
+            next_right_motor = self._right_wheel_motor if right_wheel_motor is None else \
+                self._require_id("right_motor_id", right_wheel_motor, 1, 4)
+            if next_left_motor == next_right_motor:
+                raise ValueError("left and right odometry motors must be different")
+
+            self._wheel_diameter = next_wheel_diameter
+            self._wheel_base = next_wheel_base
+            self._initial_theta_deg = next_initial_theta
+            self._left_wheel_motor = next_left_motor
+            self._right_wheel_motor = next_right_motor
+            if left_wheel_dir_inverted is not None:
+                self._left_wheel_dir_inverted = bool(left_wheel_dir_inverted)
+            if right_wheel_dir_inverted is not None:
+                self._right_wheel_dir_inverted = bool(right_wheel_dir_inverted)
+            self._ticks_per_mm = self._encoder_ppr / (math.pi * self._wheel_diameter)
+
+            snapshot = (
+                self._wheel_diameter,
+                self._wheel_base,
+                self._initial_theta_deg,
+                self._left_wheel_motor,
+                self._left_wheel_dir_inverted,
+                self._right_wheel_motor,
+                self._right_wheel_dir_inverted,
+            )
+
+        self._publish_odom_params(snapshot)
+
+    def _publish_odom_params(
+        self,
+        snapshot: tuple[float, float, float, int, bool, int, bool],
+    ) -> None:
+        msg = SysOdomParamSet()
+        (
+            msg.wheel_diameter_mm,
+            msg.wheel_base_mm,
+            msg.initial_theta_deg,
+            msg.left_motor_number,
+            msg.left_motor_dir_inverted,
+            msg.right_motor_number,
+            msg.right_motor_dir_inverted,
+        ) = snapshot
+        self._odom_param_pub.publish(msg)
+
     def _send_body_velocity_mm(self, linear_mm_s: float, angular_rad_s: float) -> None:
         """Diff-drive mixing and publish. All values in mm/s and rad/s."""
-        half_wb = self._wheel_base / 2.0
-        self._send_motor_velocity_mm(self._left_wheel_motor, linear_mm_s - angular_rad_s * half_wb)
-        self._send_motor_velocity_mm(self._right_wheel_motor, linear_mm_s + angular_rad_s * half_wb)
+        with self._lock:
+            half_wb = self._wheel_base / 2.0
+            left_motor = self._left_wheel_motor
+            right_motor = self._right_wheel_motor
+            left_dir_inverted = self._left_wheel_dir_inverted
+            right_dir_inverted = self._right_wheel_dir_inverted
+        left_velocity = linear_mm_s - angular_rad_s * half_wb
+        right_velocity = linear_mm_s + angular_rad_s * half_wb
+        if left_dir_inverted:
+            left_velocity = -left_velocity
+        if right_dir_inverted:
+            right_velocity = -right_velocity
+        self._send_motor_velocity_mm(left_motor, left_velocity)
+        self._send_motor_velocity_mm(right_motor, right_velocity)
 
     def _send_motor_velocity_mm(self, motor_id: int, velocity_mm_s: float) -> None:
         msg = DCSetVelocity()

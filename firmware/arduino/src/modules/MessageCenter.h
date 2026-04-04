@@ -391,6 +391,7 @@ private:
     static void handleSysConfigSet(const PayloadSysConfigSet *payload);
     static void handleSysDiagReq(const PayloadSysDiagReq *payload);
     static void handleSysOdomReset(const PayloadSysOdomReset *payload);
+    static void handleSysOdomParamSet(const PayloadSysOdomParamSet *payload);
 
     // ---- DC motor message handlers ----
     static void handleDCEnable(const PayloadDCEnable *payload);

@@ -366,7 +366,7 @@ The web interface provides the following panels:
 
 ### 4.4 Odometry
 
-The firmware computes differential-drive odometry from the two designated wheel motor encoders. The relevant configuration in `config.h`:
+The firmware computes differential-drive odometry from the two designated wheel motor encoders. The defaults come from `config.h` and can be overridden at runtime with `SYS_ODOM_PARAM_SET`:
 
 ```c
 #define ODOM_LEFT_MOTOR   0    // DC motor index (0-based) for left wheel
@@ -375,9 +375,9 @@ The firmware computes differential-drive odometry from the two designated wheel 
 #define WHEEL_BASE_MM     333.0f
 ```
 
-Odometry is updated at 200 Hz and streamed to the bridge as `SENSOR_KINEMATICS` telemetry. The coordinate frame follows the right-hand 2D convention: **+X is forward, +Y is left**. Initial heading `θ` defaults to 90° (facing the +Y axis) and can be overridden with `INITIAL_THETA` in `config.h`.
+Odometry is updated at 200 Hz and streamed to the bridge as `SENSOR_KINEMATICS` telemetry. The coordinate frame follows the right-hand 2D convention: **+X is forward, +Y is left**. Initial heading `θ` defaults to 90° (facing the +Y axis) and can be overridden either with `INITIAL_THETA` in `config.h` or at runtime with `SYS_ODOM_PARAM_SET`.
 
-Odometry can be reset to zero at any time via the `SYS_ODOM_RESET` command from the UI or bridge API.
+`SYS_ODOM_RESET` resets the pose to `(0, 0, current initial theta)`. `SYS_ODOM_PARAM_SET` updates wheel geometry and left/right odom wheel mapping without overwriting the current pose.
 
 ---
 
@@ -432,7 +432,7 @@ Replace `/dev/ttyUSB0` with the correct port for your OS (e.g. `/dev/cu.usbmodem
 
 All user-facing compile-time settings are in `firmware/arduino/src/config.h`. The most commonly adjusted settings are:
 
-**Robot geometry** — must match your physical robot:
+**Robot geometry** — defaults that must match your physical robot unless you override them at runtime:
 
 ```c
 #define WHEEL_DIAMETER_MM   74.0f    // outer diameter of drive wheels (mm)
@@ -912,6 +912,8 @@ The full configuration file is at `firmware/arduino/src/config.h`. The most comm
 | `ENCODER_PPR` | 1440 | Encoder pulses per revolution (spec sheet value) |
 | `ENCODER_N_MODE` | `ENCODER_4X` | Counting mode per motor (ENCODER_2X or ENCODER_4X) |
 | `ENCODER_N_DIR_INVERTED` | 0 or 1 | Flip encoder count direction per motor |
+
+The `ODOM_*` defaults above are also writable at runtime through `SYS_ODOM_PARAM_SET`. The lower-level `DC_MOTOR_*_DIR_INVERTED` and `ENCODER_*_DIR_INVERTED` settings remain compile-time motor/encoder configuration.
 | `DC_MOTOR_N_DIR_INVERTED` | 1 | Flip H-bridge direction polarity per motor |
 | `HEARTBEAT_TIMEOUT_MS` | 500 | ms without a packet before motors are disabled |
 | `RPI_BAUD_RATE` | 200000 | UART baud rate to Raspberry Pi |

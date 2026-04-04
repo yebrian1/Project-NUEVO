@@ -148,6 +148,20 @@ All payloads are tightly packed and little-endian.
 
 `PayloadSysOdomReset` — 4 bytes
 
+### `SYS_ODOM_PARAM_SET = 13` ↓
+
+`PayloadSysOdomParamSet` — 16 bytes
+
+| Field | Type | Notes |
+|---|---|---|
+| `wheelDiameterMm` | `f32` | Must be positive |
+| `wheelBaseMm` | `f32` | Must be positive |
+| `initialThetaDeg` | `f32` | Applied on future `SYS_ODOM_RESET` |
+| `leftMotorId` | `u8` | 0-based, must differ from `rightMotorId` |
+| `leftMotorDirInverted` | `u8` | `0` or `1` |
+| `rightMotorId` | `u8` | 0-based, must differ from `leftMotorId` |
+| `rightMotorDirInverted` | `u8` | `0` or `1` |
+
 ## DC Motors
 
 ### `DC_ENABLE = 16` ↓
@@ -398,6 +412,7 @@ as `r,g,b` bytes.
 | 10 | `SYS_DIAG_REQ` | ↓ | 4 |
 | 11 | `SYS_DIAG_RSP` | ↑ | 24 |
 | 12 | `SYS_ODOM_RESET` | ↓ | 4 |
+| 13 | `SYS_ODOM_PARAM_SET` | ↓ | 16 |
 | 16 | `DC_ENABLE` | ↓ | 4 |
 | 17 | `DC_SET_POSITION` | ↓ | 12 |
 | 18 | `DC_SET_VELOCITY` | ↓ | 8 |
