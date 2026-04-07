@@ -582,8 +582,8 @@ class Robot:
         Navigate to (x, y) at the given speed.
         Uses pure-pursuit steering. Requires firmware to be in RUNNING state.
 
-        blocking=True  → returns bool (True=arrived, False=timeout)
-        blocking=False → returns MotionHandle
+        Always returns a MotionHandle.
+        blocking=True waits before returning the handle.
         tolerance      — arrival radius in user units
         """
         x_mm   = x         * self._unit.value
@@ -702,8 +702,8 @@ class Robot:
         tolerance           — goal tolerance in user units
         max_angular_rad_s   — angular-rate clamp in rad/s
 
-        blocking=True  → returns bool (True=finished, False=timeout)
-        blocking=False → returns MotionHandle
+        Always returns a MotionHandle.
+        blocking=True waits before returning the handle.
         """
         if not waypoints:
             raise ValueError("waypoints must not be empty")
@@ -1253,9 +1253,10 @@ class Robot:
 
         self._nav_thread = threading.Thread(target=runner, daemon=True)
         self._nav_thread.start()
+        handle = MotionHandle(self._nav_done, self._nav_cancel)
         if blocking:
-            return self._nav_done.wait(timeout=timeout)
-        return MotionHandle(self._nav_done, self._nav_cancel)
+            handle.wait(timeout=timeout)
+        return handle
 
     def _nav_follow_purepursuit_path(
         self,
