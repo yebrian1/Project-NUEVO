@@ -41,7 +41,10 @@ services:
     privileged: true
 
     environment:
-      # Publish to the full network so robots can subscribe.
+      # Jazzy uses ROS_AUTOMATIC_DISCOVERY_RANGE instead of the deprecated
+      # ROS_LOCALHOST_ONLY.  SUBNET enables multicast discovery on the LAN.
+      - ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
+      # Keep the deprecated flag off too so it doesn't override the above.
       - ROS_LOCALHOST_ONLY=0
       # Use the same domain ID as the robot stack.
       - ROS_DOMAIN_ID=0
