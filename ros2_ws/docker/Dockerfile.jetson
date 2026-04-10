@@ -27,7 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg2 \
     && curl -sSf https://librealsense.intel.com/Debian/librealsense.pgp \
         | gpg --dearmor -o /usr/share/keyrings/librealsense-archive-keyring.gpg \
     && echo "deb [arch=arm64 signed-by=/usr/share/keyrings/librealsense-archive-keyring.gpg] \
-        https://librealsense.intel.com/Debian/apt-repo noble main" \
+        https://librealsense.intel.com/Debian/apt-repo jammy main" \
         > /etc/apt/sources.list.d/librealsense.list \
     && rm -rf /var/lib/apt/lists/*
 
