@@ -1,15 +1,14 @@
 """
-main.py — student entry point
-==============================
-This is the only file students are expected to edit.
+obstacle_avoidance.py — DWA-based obstacle avoidance example
+=============================================================
+Restored from commit 8894254 (added obstacle avoidance).
 
-The structure is intentionally simple:
-- keep one plain `state` variable
-- write helper functions for robot actions
-- use `if state == "..."` inside the main loop
-
-To run:
-    ros2 run robot robot
+Known issues (do not fix here — see comments):
+  - robot._nav_follow_dwa_path() passes mm values to a planner that expects SI units.
+  - robot._nav_follow_path_loop() passes an extra `period` argument that DWAPlanner
+    does not accept; will raise TypeError at runtime.
+  - robot._draw_lidar_obstacles() requires matplotlib (not imported in robot.py)
+    and treats self._obstacles_mm as a numpy array when it is a list.
 """
 
 from __future__ import annotations
@@ -20,6 +19,7 @@ from robot.hardware_map import Button, DEFAULT_FSM_HZ, LED, Motor
 from robot.util import densify_polyline
 from robot.path_planner import PurePursuitPlanner
 import math
+import numpy as np
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +38,6 @@ RIGHT_WHEEL_DIR_INVERTED = True
 
 
 def configure_robot(robot: Robot) -> None:
-    """Apply the user unit plus robot-specific wheel mapping and odometry settings."""
     robot.set_unit(POSITION_UNIT)
     robot.set_odometry_parameters(
         wheel_diameter=WHEEL_DIAMETER,
@@ -62,7 +61,6 @@ def show_moving_leds(robot: Robot) -> None:
 
 
 def start_robot(robot: Robot) -> None:
-    """Start the firmware and reset odometry before the main mission begins."""
     robot.set_state(FirmwareState.RUNNING)
     robot.reset_odometry()
     robot.wait_for_pose_update(timeout=0.2)
@@ -70,11 +68,9 @@ def start_robot(robot: Robot) -> None:
 
 def run(robot: Robot) -> None:
     configure_robot(robot)
-    
 
     state = "INIT"
     drive_handle = None
-    # FSM refresh rate control
     period = 1.0 / float(DEFAULT_FSM_HZ)
     next_tick = time.monotonic()
 
@@ -82,69 +78,44 @@ def run(robot: Robot) -> None:
         if state == "INIT":
             start_robot(robot)
             print("[FSM] INIT (odometry reset)")
-            path_control_points = [ #Define your path control points here (x, y) in mm
-                (0.0, 0.0), # 1st point
-                (0.0, 500.0), # 2nd point
-                (500.0, 500.0), # 3rd point
-                (500.0, 0.0), # 4th point
-                (0.0, 0.0), # 5th point
-            ]    
-            path1 = path_control_points
-            #path1 = densify_polyline(path_control_points, spacing=20.0)
-            remaining_path = path1.copy() 
+            path_control_points = [
+                (0.0,   0.0),
+                (0.0, 2000.0),
+                (2000.0, 2000.0),
+            ]
+            path = np.float64(densify_polyline(path_control_points, spacing=500.0))
+            robot._nav_follow_dwa_path(
+                max_vel_mm=200.0,
+                max_acc_mm=300.0,
+                max_angular_rad=1.0,
+                max_angular_acc_rad=1.8,
+                lookahead_mm=300.0,
+                advance_radius_mm=100.0,
+                tolerance_mm=100.0,
+                gains_of_costs=[2.0, 0.01, 0.3, 1.0, 0.1], # [gain_goal, gain_heading, gain_obs_base, gain_speed, gain_path]
+                period=period,
+                predict_time=2.0,
+                predict_velocity_samples_resolution=[10.0, 0.1],
+                obstacles_range_mm=1000.0,
+                ttc_weight=0.1,
+            )
             print("Path is ready, Entering IDLE state.")
             state = "IDLE"
 
         elif state == "IDLE":
             show_idle_leds(robot)
+            robot._draw_lidar_obstacles()
             print("[FSM] IDLE - Press BTN_1 to enter MOVING state.")
             if robot.get_button(Button.BTN_1):
-                LOOKAHEAD_DIST = 100.0 # Lookahead distance in mm (adjust as needed)
-                planner1 = PurePursuitPlanner(
-                    lookahead_dist=LOOKAHEAD_DIST, 
-                    max_angular=1.5, # Max angular velocity in rad/s (adjust as needed)
-                    goal_tolerance=20.0, # Distance in mm to consider the target reached (adjust as needed)
-             )
-                print("Pure Pursuit Planner is initialized. Start Moving!")
+                print("Start Moving!")
                 print("[FSM] MOVING")
                 state = "MOVING"
 
         elif state == "MOVING":
             show_moving_leds(robot)
-            """Start your code here"""
-            # Step 1: Get current pose, including current coordinates and heading angle in degrees 
-            # using robot.get_pose() function. Store the values in current_x, current_y, and current_theta_deg variables. 
+            # robot._draw_lidar_obstacles()
+            state = robot._nav_follow_path_loop(path, period)
 
-            # Step 2: Convert current_theta_deg to radians and store it in current_theta_rad variable.  
-
-            # Step 3: Use the _advance_remaining_path() function to update the remaining_path variable 
-            # by advancing it based on the current position (current_x, current_y) and an advance radius(20.0) mm.
-            # This will take out the waypoints that are already passed (within 20mm of the current position), 
-            # effectively "advancing" the path as the robot moves.
-
-            # Step 4: Use the _lookahead_point() function to calculate the current pursuit point 
-            # in your path, defined as (current_pursuit_x, current_pursuit_y)
-
-            # Step 5: Use the compute_velocity() function of the PurePursuitPlanner 
-            # to calculate the linear and angular velocity commands
-
-            # Step 6: Use the robot.set_velocity() function to send the velocity commands to the robot.
-
-            # Step 7: Check if the current target point is reached using the 
-            # CurrentTargetReached() function of the PurePursuitPlanner.
-            # Just uncomment the following lines to enable the print statements.
-            """if planner1.CurrentTargetReached(current_pursuit_x, current_pursuit_y, current_x, current_y): 
-                print("MOVING: Target reached! Stopping.")
-                robot.stop()
-                print("[FSM] IDLE")
-                state = "IDLE"       """        
-            
-            # Step 8: Print the current pose and current pursuit point to the console for debugging purposes.
-            # Just uncomment the following lines to enable the print statements.
-            #print(f"Current Pose: ({current_x:.1f}, {current_y:.1f}, {current_theta_deg:.1f} deg)")
-            #print(f"Current Pursuit Point: ({current_pursuit_x:.1f}, {current_pursuit_y:.1f})")            
-            print("Finish your code in Task 2") # Delete this line after you finish Task 2
-            
         # FSM refresh rate control
         next_tick += period
         sleep_s = next_tick - time.monotonic()

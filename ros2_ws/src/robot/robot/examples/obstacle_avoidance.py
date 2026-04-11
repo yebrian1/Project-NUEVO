@@ -80,28 +80,23 @@ def run(robot: Robot) -> None:
             print("[FSM] INIT (odometry reset)")
             path_control_points = [
                 (0.0,   0.0),
-                (0.0,   500.0),
-                (500.0, 500.0),
-                (500.0, 0.0),
-                (0.0,   0.0),
+                (0.0, 2000.0),
+                (2000.0, 2000.0),
             ]
-            path = np.float64(densify_polyline(path_control_points, spacing=20.0))
-            # BUG: _nav_follow_dwa_path() passes mm values to DWAPlanner which
-            #      expects SI units (m/s, m/s², rad/s). Robot will move incorrectly.
-            # BUG: advance_radius_mm=150.0 is passed as robot_radius — different semantics.
+            path = np.float64(densify_polyline(path_control_points, spacing=400.0))
             robot._nav_follow_dwa_path(
-                max_vel_mm=200.0,
-                max_acc_mm=300.0,
-                max_angular_radv=1.0,
-                max_angular_acc_rad=2.0,
+                max_vel_mm=300.0,
+                max_acc_mm=400.0,
+                max_angular_rad=0.8,
+                max_angular_acc_rad=1.5,
                 lookahead_mm=200.0,
-                advance_radius_mm=150.0,
+                advance_radius_mm=100.0,
                 tolerance_mm=100.0,
-                gains_of_costs=[2.0, 0.02, 0.2, 0.8, 0.1],
+                gains_of_costs=[2.0, 0.01, 0.1, 1.0, 0.1], # [gain_goal, gain_heading, gain_obs_base, gain_speed, gain_path]
                 period=period,
                 predict_time=2.0,
                 predict_velocity_samples_resolution=[20.0, 0.1],
-                obstacles_range_mm=1000.0,
+                obstacles_range_mm=500.0,
                 ttc_weight=0.1,
             )
             print("Path is ready, Entering IDLE state.")
@@ -109,20 +104,17 @@ def run(robot: Robot) -> None:
 
         elif state == "IDLE":
             show_idle_leds(robot)
-            # BUG: _draw_lidar_obstacles() requires matplotlib imported in robot.py
-            #      and expects self._obstacles_mm to be a numpy array — will crash.
             robot._draw_lidar_obstacles()
             print("[FSM] IDLE - Press BTN_1 to enter MOVING state.")
             if robot.get_button(Button.BTN_1):
-                # BUG: _nav_follow_path_loop() passes extra `period` arg to
-                #      DWAPlanner.compute_velocity() — will raise TypeError.
-                robot._nav_follow_path_loop(path, period)
                 print("Start Moving!")
                 print("[FSM] MOVING")
                 state = "MOVING"
 
         elif state == "MOVING":
             show_moving_leds(robot)
+            # robot._draw_lidar_obstacles()
+            state = robot._nav_follow_path_loop(path, period)
 
         # FSM refresh rate control
         next_tick += period

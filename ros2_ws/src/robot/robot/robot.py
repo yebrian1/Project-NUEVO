@@ -211,8 +211,7 @@ class Robot:
         self._button_edges: int = 0
         self._limit_edges: int = 0
         self._have_io_input: bool = False
-        self._obstacles_mm: list[tuple[float, float]] = []
-        self._obstacle_provider: Callable[[], list[tuple[float, float]]] | None = None
+        self._obstacles_mm: np.ndarray = np.float64([])
 
         # ── Events ────────────────────────────────────────────────────────────
         self._pose_event: threading.Event = threading.Event()
@@ -575,20 +574,20 @@ class Robot:
         code can either call this repeatedly with fresh detections or install a
         live provider with set_obstacle_provider().
         """
-        converted = [
+        converted = np.float64([
             (
                 self._require_finite_float("obstacle_x", obs_x) * self._unit.value,
                 self._require_finite_float("obstacle_y", obs_y) * self._unit.value,
             )
             for obs_x, obs_y in obstacles
-        ]
+        ])
         with self._lock:
             self._obstacles_mm = converted
 
     def clear_obstacles(self) -> None:
         """Clear the cached APF obstacle list set by set_obstacles()."""
         with self._lock:
-            self._obstacles_mm = []
+            self._obstacles_mm = np.float64([])
 
     def get_obstacles(self) -> list[tuple[float, float]]:
         """Return the current APF obstacles in the current user length unit."""
@@ -1604,7 +1603,7 @@ class Robot:
         self,
         max_vel_mm: float,
         max_acc_mm: float,
-        max_angular_radv: float,
+        max_angular_rad: float,
         max_angular_acc_rad: float,
         lookahead_mm: float,
         advance_radius_mm: float,
@@ -1616,16 +1615,11 @@ class Robot:
         obstacles_range_mm: float,
         ttc_weight: float,
     ) -> None:
-        # BUG: DWAPlanner (upstream) expects SI units (m, m/s, rad/s) but this
-        #      method passes raw mm values. The planner will compute velocities
-        #      orders-of-magnitude too large without a unit conversion layer.
-        # BUG: advance_radius_mm is passed as robot_radius — these are semantically
-        #      different parameters (path-advance threshold vs. physical robot size).
         from robot.path_planner import DWAPlanner
         self.planner = DWAPlanner(
             lookahead_dist=lookahead_mm,
             max_linear_speed=max_vel_mm,
-            max_angular_speed=max_angular_radv,
+            max_angular_speed=max_angular_rad,
             max_linear_acc=max_acc_mm,
             max_angular_acc=max_angular_acc_rad,
             goal_tolerance=tolerance_mm,
@@ -1639,14 +1633,11 @@ class Robot:
         )
 
     def _nav_follow_path_loop(self, path, period: float):
-        # BUG: passes `period` as a 5th positional arg to DWAPlanner.compute_velocity()
-        #      which only accepts 4 args (path, pose, velocity, obstacles). Will raise
-        #      TypeError at runtime. period is already baked into the planner via dt.
-        # BUG: accesses self._pose and self._vel directly without the lock, risking a
-        #      torn read on the ROS spin thread. Use self._get_pose_mm() instead.
-        # BUG: self._obstacles_mm is a list[tuple] but DWAPlanner.compute_velocity()
-        #      expects a numpy array. Will raise AttributeError inside calc_obstacle_cost().
-        v, w = self.planner.compute_velocity(path, self._pose, self._vel, self._obstacles_mm)
+        if self._obstacles_mm.size != 0:
+            # lidar orientation due to installation is 180 deg rotated from robot forward, so rotate obstacles accordingly
+            self._obstacles_mm = (np.array([[np.cos(np.pi), -np.sin(np.pi)], [np.sin(np.pi), np.cos(np.pi)]]).T @ self._obstacles_mm.T).T
+        v, w = self.planner.compute_velocity(path, self._pose, self._vel, self._obstacles_mm, period)
+        print(f"Computed velocity: linear={v:.1f} mm/s, angular={math.degrees(w):.1f} deg/s")
         self.set_velocity(v, math.degrees(w))
         print(f"Current Pose: ({self._pose[0]:.1f}, {self._pose[1]:.1f}, {math.degrees(self._pose[2]):.1f} deg)")
 
@@ -1656,24 +1647,19 @@ class Robot:
             return "IDLE"
 
         return "MOVING"
-        # return self._obstacles_mm  # BUG: original stray return — unreachable dead code
 
     def _draw_lidar_obstacles(self):
-        # BUG: matplotlib (plt) is not imported in robot.py. Will raise NameError on
-        #      first call. Add `import matplotlib.pyplot as plt` to fix.
-        # BUG: self._obstacles_mm is list[tuple[float, float]] but code calls
-        #      .size and indexes as 2-D numpy array ([:, 0]). Will raise AttributeError.
-        #      Convert with np.array(self._obstacles_mm) before use.
-        # BUG: plt.subplots() called every tick — creates a new figure window each time
-        #      instead of updating the existing one. Store fig/ax as instance attributes.
+        
         plt.ion()
         self.fig, self.ax = plt.subplots()
         self.ax.clear()
-        print(self._obstacles_mm)
+
         if self._obstacles_mm.size != 0:
-            self.ax.scatter(self._obstacles_mm[:, 0] / 1000.0, self._obstacles_mm[:, 1] / 1000.0, s=5)
-        self.ax.set_xlim(-3, 3)
-        self.ax.set_ylim(-3, 3)
+            # lidar orientation due to installation is 180 deg rotated from robot forward, so rotate obstacles accordingly
+            obstacles = (np.array([[np.cos(np.pi+self._pose[2]), -np.sin(np.pi+self._pose[2])], [np.sin(np.pi+self._pose[2]), np.cos(np.pi+self._pose[2])]]).T @ self._obstacles_mm.T).T
+            self.ax.scatter(obstacles[:, 0] / 1000.0, obstacles[:, 1] / 1000.0, s=5)
+        self.ax.set_xlim(-2, 2)
+        self.ax.set_ylim(-2, 2)
         self.ax.set_title("LiDAR Scan")
         self.ax.set_aspect("equal")
         plt.grid()
