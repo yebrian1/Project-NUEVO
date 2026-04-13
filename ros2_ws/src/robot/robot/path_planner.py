@@ -304,7 +304,12 @@ class DWAPlanner():
         self.dt = dt
         x, y, theta = pose
         if len(obstacles) > 0:
-            obstacles = (np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]]).T @ obstacles.T).T + np.array([[x, y],])
+            # lidar orientation due to installation is 180 deg rotated from robot forward, so rotate obstacles accordingly
+            obstacles = (np.array([[np.cos(np.pi), -np.sin(np.pi)], [np.sin(np.pi), np.cos(np.pi)]]) @ obstacles.T).T
+            # since some robot parts (e.g., the arm) may cause obstacles to be detected, we can filter out those obstacles behind the lidar.
+            obstacles = obstacles[obstacles[:,0] > 0,:]
+            # transform obstacles from robot frame to world frame.
+            obstacles = (np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]]) @ obstacles.T).T + np.array([[x, y],])
             obstacles = obstacles[np.linalg.norm(obstacles-np.float64([[x, y]]), axis=1)<self.obstacles_range,:]
         vx, vy, w = velocity
 
@@ -352,7 +357,7 @@ class DWAPlanner():
                     best_u = [v, w]
 
         best_v, best_w = best_u
-        print(f"Best cost: {best_cost:.4f}")
+        print(f"Obstacle gain: {self.gain_obs_base:.4f}, Best cost: {best_cost:.4f}")
         if best_cost == float('inf') or (abs(best_v) < (0.01 * 1000) and abs(best_w) < 0.05):
             # return best_u_when_blocked[0], best_u_when_blocked[1]   # rotate in place
             return self.pure_velocity_search(pose, obstacles)   # rotate in place

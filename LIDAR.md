@@ -30,6 +30,9 @@ source /ros2_ws/install/setup.bash
 ```bash
 ros2 run rplidar_ros rplidar_node --ros-args   -p channel_type:="serial"   -p serial_port:="/dev/rplidar"   -p serial_baudrate:=460800   -p frame_id:="laser_frame"   -p angle_compensate:=true   -p scan_mode:="Standard"
 ```
+```bash
+ros2 run rplidar_ros rplidar_node --ros-args   -p channel_type:="serial"   -p serial_port:="/dev/rplidar"   -p serial_baudrate:=460800   -p frame_id:="laser_frame"   -p angle_compensate:=true   -p scan_mode:="Standard" -p scan_frequency:=2.0
+```
 
 # Open Docker in the Second terminal
 1. Source ROS2 environment

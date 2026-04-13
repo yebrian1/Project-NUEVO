@@ -1637,7 +1637,7 @@ class Robot:
             # lidar orientation due to installation is 180 deg rotated from robot forward, so rotate obstacles accordingly
             self._obstacles_mm = (np.array([[np.cos(np.pi), -np.sin(np.pi)], [np.sin(np.pi), np.cos(np.pi)]]).T @ self._obstacles_mm.T).T
         v, w = self.planner.compute_velocity(path, self._pose, self._vel, self._obstacles_mm, period)
-        print(f"Computed velocity: linear={v:.1f} mm/s, angular={math.degrees(w):.1f} deg/s")
+        # print(f"Computed velocity: linear={v:.1f} mm/s, angular={math.degrees(w):.1f} deg/s")
         self.set_velocity(v, math.degrees(w))
         print(f"Current Pose: ({self._pose[0]:.1f}, {self._pose[1]:.1f}, {math.degrees(self._pose[2]):.1f} deg)")
 
@@ -1656,7 +1656,11 @@ class Robot:
 
         if self._obstacles_mm.size != 0:
             # lidar orientation due to installation is 180 deg rotated from robot forward, so rotate obstacles accordingly
-            obstacles = (np.array([[np.cos(np.pi+self._pose[2]), -np.sin(np.pi+self._pose[2])], [np.sin(np.pi+self._pose[2]), np.cos(np.pi+self._pose[2])]]).T @ self._obstacles_mm.T).T
+            obstacles = (np.array([[np.cos(np.pi), -np.sin(np.pi)], [np.sin(np.pi), np.cos(np.pi)]]) @ self._obstacles_mm.T).T
+            # since some robot parts (e.g., the arm) may cause obstacles to be detected, we can filter out those obstacles behind the lidar.
+            obstacles = obstacles[obstacles[:,0] > 0,:]
+            # transform obstacles from robot frame to world frame.
+            obstacles = (np.array([[np.cos(self._pose[2]), -np.sin(self._pose[2])], [np.sin(self._pose[2]), np.cos(self._pose[2])]]) @ obstacles.T).T + np.array([[self._pose[0], self._pose[1]],])
             self.ax.scatter(obstacles[:, 0] / 1000.0, obstacles[:, 1] / 1000.0, s=5)
         self.ax.set_xlim(-2, 2)
         self.ax.set_ylim(-2, 2)
@@ -1666,6 +1670,7 @@ class Robot:
         plt.draw()
         plt.pause(0.001)
         plt.savefig("/data/plot.png")
+        plt.close()
 
     # =========================================================================
     # Internal — blocking waits for actuator completion
