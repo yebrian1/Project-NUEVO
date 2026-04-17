@@ -10,7 +10,7 @@ from rclpy.node import Node
 
 import time as _time
 
-from robot.sensor_fusion import ComplementaryFilter, SensorFusion
+from robot.sensor_fusion import OrientationComplementaryFilter, PositionComplementaryFilter, SensorFusion
 
 from bridge_interfaces.msg import (
     DCEnable,
@@ -218,7 +218,7 @@ class Robot:
         self._ahrs_prev_wrapped:   float | None = None  # previous wrap(heading-offset); None = not yet seeded
         self._odom_reset_pending:  bool       = False  # True between reset_odometry() call and firmware-confirmed reset tick
         self._fused_theta:        float      = math.radians(self.INITIAL_THETA_DEG)  # fusion strategy output (rad)
-        self._fusion: SensorFusion           = ComplementaryFilter(alpha=0.02)
+        self._fusion: SensorFusion           = OrientationComplementaryFilter(alpha=0.02)
         self._pose:    tuple = (0.0, 0.0, 0.0)  # x_mm, y_mm, theta_rad (raw odometry)
         # ── GPS position fusion ───────────────────────────────────────────────
         self._tracked_tag_id:    int         = -1    # tag to track (-1 = any)
@@ -232,13 +232,7 @@ class Robot:
         self._tag_body_offset_y_mm: float    = 0.0   # tag position in robot body frame y (mm, left)
         self._fused_x_mm:        float       = 0.0   # complementary-filter x output (mm)
         self._fused_y_mm:        float       = 0.0   # complementary-filter y output (mm)
-        self._pos_fusion_alpha:  float       = 0.10  # GPS weight [0 = all odometry, 1 = all GPS]
-        # ── GPS-anchored dead reckoning ───────────────────────────────────────
-        self._anchor_x_mm:       float       = 0.0   # last GPS-corrected absolute x (mm)
-        self._anchor_y_mm:       float       = 0.0   # last GPS-corrected absolute y (mm)
-        self._odom_x_at_anchor:  float       = 0.0   # raw odometry x when anchor was set
-        self._odom_y_at_anchor:  float       = 0.0   # raw odometry y when anchor was set
-        self._anchor_valid:      bool        = False  # True once first GPS fix has been received
+        self._pos_fusion:        PositionComplementaryFilter = PositionComplementaryFilter(alpha=0.10)
         self._vel:     tuple = (0.0, 0.0, 0.0)  # vx_mm_s, vy_mm_s, vtheta_rad_s
         self._buttons: int   = 0
         self._limits:  int   = 0
@@ -472,44 +466,14 @@ class Robot:
                 self._gps_last_time > 0.0
                 and (_time.monotonic() - self._gps_last_time) < self._gps_timeout_s
             )
-            if gps_fresh:
-                diff_x = self._gps_x_mm - msg.x
-                diff_y = self._gps_y_mm - msg.y
-                self._fused_x_mm = msg.x + self._pos_fusion_alpha * diff_x
-                self._fused_y_mm = msg.y + self._pos_fusion_alpha * diff_y
-                # Update anchor so dead reckoning continues from the corrected position.
-                self._anchor_x_mm      = self._fused_x_mm
-                self._anchor_y_mm      = self._fused_y_mm
-                self._odom_x_at_anchor = msg.x
-                self._odom_y_at_anchor = msg.y
-                self._anchor_valid     = True
-            elif self._anchor_valid:
-                # GPS stale but we have a prior fix: project from anchor using
-                # odometry delta so drift only accumulates since the last fix.
-                self._fused_x_mm = self._anchor_x_mm + (msg.x - self._odom_x_at_anchor)
-                self._fused_y_mm = self._anchor_y_mm + (msg.y - self._odom_y_at_anchor)
-            else:
-                # No GPS fix ever received; fall back to raw odometry.
-                self._fused_x_mm = msg.x
-                self._fused_y_mm = msg.y
+            gps_x = self._gps_x_mm if gps_fresh else None
+            gps_y = self._gps_y_mm if gps_fresh else None
+            self._fused_x_mm, self._fused_y_mm = self._pos_fusion.update(
+                msg.x, msg.y, gps_x, gps_y
+            )
 
         self._pose_event.set()
         self._pose_event.clear()
-
-        # # Publish fused state so external tools (RViz, student nodes, etc.)
-        # # receive corrected position and heading on /fused_kinematics without
-        # # needing to subscribe to the raw /sensor_kinematics themselves.
-        # fused_msg = SensorKinematics()
-        # fused_msg.header    = getattr(msg, 'header', None)
-        # fused_msg.vx        = msg.vx
-        # fused_msg.vy        = msg.vy
-        # fused_msg.v_theta   = msg.v_theta
-        # fused_msg.timestamp = getattr(msg, 'timestamp', 0)
-        # with self._lock:
-        #     fused_msg.x     = self._fused_x_mm
-        #     fused_msg.y     = self._fused_y_mm
-        #     fused_msg.theta = self._fused_theta
-        # self._fused_kin_pub.publish(fused_msg)
 
     def _on_tag_detections(self, msg: TagDetectionArray) -> None:
         """Cache GPS position from the tracked ArUco tag (metres → mm, arena frame)."""
@@ -647,6 +611,7 @@ class Robot:
             self._ahrs_prev_wrapped = None
             self._odom_reset_pending = True
             self._odom_reset_event.clear()
+            self._pos_fusion.reset()
         msg = SysOdomReset()
         msg.flags = 0
         self._odom_pub.publish(msg)
@@ -1626,36 +1591,36 @@ class Robot:
         with self._lock:
             return math.degrees(self._fused_theta)
 
-    def set_fusion_strategy(self, strategy: SensorFusion) -> None:
+    def set_orientation_fusion_strategy(self, strategy: SensorFusion) -> None:
         """
         Replace the active heading-fusion strategy.
 
-        Any SensorFusion subclass is accepted (ComplementaryFilter,
+        Any SensorFusion subclass is accepted (OrientationComplementaryFilter,
         AdaptiveComplementaryFilter, HeadingKalmanFilter, or a custom class).
         The new strategy takes effect on the next kinematics update.
         """
         with self._lock:
             self._fusion = strategy
 
-    def set_fusion_alpha(self, alpha: float) -> None:
+    def set_orientation_fusion_alpha(self, alpha: float) -> None:
         """
         Set the AHRS heading weight for the complementary filter (0.0–1.0).
 
-        Only valid when the active strategy is ComplementaryFilter (the default).
+        Only valid when the active strategy is OrientationComplementaryFilter (the default).
         Raises TypeError if a different strategy is currently active — call
-        set_fusion_strategy(ComplementaryFilter(alpha)) instead.
+        set_orientation_fusion_strategy(OrientationComplementaryFilter(alpha)) instead.
 
         Lower values trust odometry more (less AHRS noise, more drift).
         Higher values correct drift faster but introduce more AHRS noise.
         Default is 0.02.
         """
         with self._lock:
-            if not isinstance(self._fusion, ComplementaryFilter):
+            if not isinstance(self._fusion, OrientationComplementaryFilter):
                 raise TypeError(
-                    f"set_fusion_alpha() requires the active strategy to be "
-                    f"ComplementaryFilter, but it is "
+                    f"set_orientation_fusion_alpha() requires the active strategy to be "
+                    f"OrientationComplementaryFilter, but it is "
                     f"{type(self._fusion).__name__}. "
-                    "Use set_fusion_strategy(ComplementaryFilter(alpha)) instead."
+                    "Use set_orientation_fusion_strategy(OrientationComplementaryFilter(alpha)) instead."
                 )
             self._fusion.alpha = max(0.0, min(1.0, float(alpha)))
 
@@ -1739,7 +1704,7 @@ class Robot:
             self._tag_body_offset_x_mm = float(forward_mm)
             self._tag_body_offset_y_mm = float(left_mm)
 
-    def set_pos_fusion_alpha(self, alpha: float) -> None:
+    def set_position_fusion_alpha(self, alpha: float) -> None:
         """
         Set the GPS weight for position fusion (0.0–1.0).
 
@@ -1748,7 +1713,7 @@ class Robot:
         Default is 0.10.
         """
         with self._lock:
-            self._pos_fusion_alpha = max(0.0, min(1.0, float(alpha)))
+            self._pos_fusion.alpha = max(0.0, min(1.0, float(alpha)))
 
     def is_gps_active(self) -> bool:
         """Return True if a GPS fix for the tracked tag arrived within the staleness window."""

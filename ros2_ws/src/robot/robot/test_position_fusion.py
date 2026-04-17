@@ -3,7 +3,7 @@ test_position_fusion.py — GPS-anchored position fusion alpha-tuning test
 =========================================================================
 Purpose
 -------
-Helps students tune ``POS_FUSION_ALPHA`` by driving the robot in a straight
+Helps students tune ``POSITION_FUSION_ALPHA`` by driving the robot in a straight
 line along the robot's initial forward direction between two marked spots on
 the floor.
 
@@ -11,7 +11,7 @@ The test does not assume the robot starts at the GPS/world origin. Instead,
 when GPS is first acquired it records the current odometry position and uses
 that as the translation offset for the GPS frame. After that, the fused
 position behaves in the robot's odometry/world frame and students can tune
-``POS_FUSION_ALPHA`` directly against the marked travel distance.
+``POSITION_FUSION_ALPHA`` directly against the marked travel distance.
 
 Setup
 -----
@@ -62,7 +62,7 @@ from robot.hardware_map import DEFAULT_FSM_HZ
 
 DRIVE_DISTANCE_MM     = 1000.0   # mm — distance to drive once inside GPS range
 DRIVE_SPEED_MM_S      = 100.0   # mm/s forward speed
-POS_FUSION_ALPHA      = 0.3     # GPS weight for complementary filter (0–1); tune this
+POSITION_FUSION_ALPHA      = 0.3     # GPS weight for complementary filter (0–1); tune this
 GPS_SEARCH_EXTRA_MM   = 2000.0  # mm — extra distance to drive past DRIVE_DISTANCE_MM
                                  #       searching for GPS if not yet acquired; set to 0
                                  #       to disable the extension and stop at DRIVE_DISTANCE_MM
@@ -223,7 +223,7 @@ def _drive_straight(robot: Robot, rec: _Record) -> None:
 
     print(
         f"[pos_fusion_test] Driving in world-Y direction for {DRIVE_DISTANCE_MM:.0f} mm "
-        f"at {DRIVE_SPEED_MM_S:.0f} mm/s  alpha={POS_FUSION_ALPHA}\n"
+        f"at {DRIVE_SPEED_MM_S:.0f} mm/s  alpha={POSITION_FUSION_ALPHA}\n"
         f"[pos_fusion_test] GPS frame will be translated to match odometry "
         f"at first acquisition.\n"
         f"[pos_fusion_test] If GPS is not acquired within {DRIVE_DISTANCE_MM:.0f} mm, "
@@ -231,7 +231,7 @@ def _drive_straight(robot: Robot, rec: _Record) -> None:
         f"GPS coverage (total cap: {max_dist:.0f} mm)."
         if GPS_SEARCH_EXTRA_MM > 0 else
         f"[pos_fusion_test] Driving in world-Y direction for {DRIVE_DISTANCE_MM:.0f} mm "
-        f"at {DRIVE_SPEED_MM_S:.0f} mm/s  alpha={POS_FUSION_ALPHA}"
+        f"at {DRIVE_SPEED_MM_S:.0f} mm/s  alpha={POSITION_FUSION_ALPHA}"
     )
 
     while True:
@@ -384,7 +384,7 @@ def _plot_results(rec: _Record) -> None:
     total_dist = t[-1] * DRIVE_SPEED_MM_S if len(t) > 1 else DRIVE_DISTANCE_MM
     fig.suptitle(
         f"Position fusion — world-Y drive  "
-        f"(α={POS_FUSION_ALPHA}, GPS acquired {'at start' if gps_active[0] else 'mid-drive' if gps_active.any() else 'never'})",
+        f"(α={POSITION_FUSION_ALPHA}, GPS acquired {'at start' if gps_active[0] else 'mid-drive' if gps_active.any() else 'never'})",
         fontsize=12,
     )
     gps_patch = mpatches.Patch(color="green", alpha=0.3, label="GPS active")
@@ -461,7 +461,7 @@ def run(robot: Robot) -> None:
     # Start with zero translation; the test learns the GPS→odom offset when
     # the robot first enters GPS view.
     robot.set_gps_offset(0.0, 0.0)
-    robot.set_pos_fusion_alpha(POS_FUSION_ALPHA)
+    robot.set_position_fusion_alpha(POSITION_FUSION_ALPHA)
 
     rec = _Record()
     _drive_straight(robot, rec)
