@@ -79,15 +79,15 @@ POSITION_UNIT = Unit.MM
 
 # Servo — gripper jaw
 GRIPPER_CHANNEL   = ServoChannel.CH_1
-GRIPPER_OPEN_DEG  = 180.0   # degrees — jaw fully open
-GRIPPER_CLOSE_DEG = 40.0   # degrees — jaw gripping
+GRIPPER_OPEN_DEG  = 90.0   # degrees — jaw fully open
+GRIPPER_CLOSE_DEG = 180.0   # degrees — jaw gripping
 
 # Stepper — vertical lift
 ARM_STEPPER        = Stepper.STEPPER_1
 ARM_EXTEND_STEPS   = 2000   # steps from home to over the pick station
 # we are using a stepper for vertical lift instead of DC. help me define parameters
-arm_up_steps = 2000
-arm_down_steps = 0
+arm_up_steps = -2000
+arm_down_steps = 1000
 arm_tolerance = 30
 ARM_MAX_VELOCITY   = 800    # steps/s
 ARM_ACCELERATION   = 400    # steps/s²
@@ -157,21 +157,9 @@ def pick_disk(robot: Robot, blocking: bool = True, timeout: float = None):
     is_finished() while staying responsive to button presses.
     """
     def worker(task: TaskHandle) -> None:
-        # 1. Raise lift so the arm clears any obstacles while extending
-        print("[SEQ] raising lift")
-        robot.enable_motor(LIFT_MOTOR, DCMotorMode.POSITION)
-        robot.set_motor_position(
-            LIFT_MOTOR, LIFT_UP_TICKS,
-            max_vel_ticks=LIFT_MAX_VEL,
-            tolerance_ticks=LIFT_TOLERANCE,
-            blocking=True,
-            timeout=5.0,
-        )
-        if task.cancelled():
-            return
-
-        # 2. lift arm
-        print("[SEQ] extending arm")
+        
+        # 1. Lift arm up (Stepper)
+        print("[SEQ] lifting arm")
         robot.step_enable(ARM_STEPPER)
         robot.step_move(
             ARM_STEPPER,
@@ -183,16 +171,14 @@ def pick_disk(robot: Robot, blocking: bool = True, timeout: float = None):
         if task.cancelled():
             return
 
-        # 3. Open gripper before lowering
-        #print("[SEQ] opening gripper")
-        ##robot.enable_servo(GRIPPER_CHANNEL)
-        #robot.set_servo(GRIPPER_CHANNEL, GRIPPER_OPEN_DEG)
-        #if not task.sleep(0.4):   # wait for servo to reach position
-         #   return
+        # 2. Open gripper before lowering
+        print("[SEQ] opening gripper")
+        robot.enable_servo(GRIPPER_CHANNEL)  # CRITICAL: Enable servo before moving
+        robot.set_servo(GRIPPER_CHANNEL, GRIPPER_OPEN_DEG)
+        time.sleep(0.4)  # Using time.sleep instead of task.sleep
 
-        # 2. put arm down
-        print("[SEQ] extending arm")
-        robot.step_enable(ARM_STEPPER)
+        # 3. Put arm down (Stepper)
+        print("[SEQ] lowering arm")
         robot.step_move(
             ARM_STEPPER,
             steps=arm_down_steps,
@@ -203,60 +189,22 @@ def pick_disk(robot: Robot, blocking: bool = True, timeout: float = None):
         if task.cancelled():
             return
 
-        # 4. Lower lift to disk
-      #  print("[SEQ] lowering to disk")
-      #  robot.set_motor_position(
-      #      LIFT_MOTOR, LIFT_DOWN_TICKS,
-      #      max_vel_ticks=LIFT_MAX_VEL,
-      #      tolerance_ticks=LIFT_TOLERANCE,
-      #      blocking=True,
-      #      timeout=5.0,
-      #  )
-      #  if task.cancelled():
-      #      return
-
-        # 5. Close gripper to grip disk
+        # 4. Close gripper to grip disk
         print("[SEQ] gripping disk")
         robot.set_servo(GRIPPER_CHANNEL, GRIPPER_CLOSE_DEG)
-        if not task.sleep(0.5):
-            return
+        time.sleep(0.5)
 
-        # Raise lift with disk
-        # 2. lift arm
-        print("[SEQ] extending arm")
-        robot.step_enable(ARM_STEPPER)
+        # 5. Put arm down with disk (Stepper)
+        print("[SEQ] lowering arm with disk")
         robot.step_move(
             ARM_STEPPER,
-            steps=arm_up_steps,
+            steps=arm_down_steps,
             move_type=StepMoveType.RELATIVE,
             blocking=True,
             timeout=10.0,
         )
         if task.cancelled():
             return
-
-        # 6. Raise lift with disk
-        #print("[SEQ] raising with disk")
-        #robot.set_motor_position(
-        #    LIFT_MOTOR, LIFT_UP_TICKS,
-         #   max_vel_ticks=LIFT_MAX_VEL,
-          #  tolerance_ticks=LIFT_TOLERANCE,
-           # blocking=True,
-            #timeout=5.0,
-        #)
-        if task.cancelled():
-            return
-
-        # 7. Retract arm
-       # print("[SEQ] retracting arm")
-        #robot.step_move(
-         #   ARM_STEPPER,
-          #  steps=ARM_EXTEND_STEPS,
-           # move_type=StepMoveType.RELATIVE,
-            #blocking=True,
-            #timeout=10.0,
-        #)
-        #robot.step_disable(ARM_STEPPER)
 
         print("[SEQ] pick complete")
 

@@ -83,11 +83,210 @@ def run(robot: Robot) -> None:
             start_robot(robot)
             print("[FSM] INIT (odometry reset)")
             path_control_points = [ #Define your path control points here (x, y) in mm
-                (0.0, 0.0), # 1st point
-                (0.0, 500.0), # 2nd point
-                (500.0, 500.0), # 3rd point
-                (500.0, 0.0), # 4th point
-                (0.0, 0.0), # 5th point
+                (0.0, 0.0),     # 1st point
+                (0.0, 10.0),
+                (0.0, 20.0),
+                (0.0, 30.0),
+                (0.0, 40.0),
+                (0.0, 50.0),
+                (0.0, 60.0),
+                (0.0, 70.0),
+                (0.0, 80.0),
+                (0.0, 90.0),
+                (0.0, 100.0),
+                (0.0, 110.0),
+                (0.0, 120.0),
+                (0.0, 130.0),
+                (0.0, 140.0),
+                (0.0, 150.0),
+                (0.0, 160.0),
+                (0.0, 170.0),
+                (0.0, 180.0),
+                (0.0, 190.0),
+                (0.0, 200.0),
+                (0.0, 210.0),
+                (0.0, 220.0),
+                (0.0, 230.0),
+                (0.0, 240.0),
+                (0.0, 250.0),   # 1st point
+                (0.0, 260.0),
+                (0.0, 270.0),
+                (0.0, 280.0),
+                (0.0, 290.0),
+                (0.0, 300.0),
+                (0.0, 310.0),
+                (0.0, 320.0),
+                (0.0, 330.0),
+                (0.0, 340.0),
+                (0.0, 350.0),
+                (0.0, 360.0),
+                (0.0, 370.0),
+                (0.0, 380.0),
+                (0.0, 390.0),
+                (0.0, 400.0),
+                (0.0, 410.0),
+                (0.0, 420.0),
+                (0.0, 430.0),
+                (0.0, 440.0),
+                (0.0, 450.0),
+                (0.0, 460.0),
+                (0.0, 470.0),
+                (0.0, 480.0),
+                (0.0, 490.0),
+                (0.0, 500.0),   # 2nd point
+                (0.1, 500.0),   # 2nd point
+                (10.0, 500.0),
+                (20.0, 500.0),
+                (30.0, 500.0),
+                (40.0, 500.0),
+                (50.0, 500.0),
+                (60.0, 500.0),
+                (70.0, 500.0),
+                (80.0, 500.0),
+                (90.0, 500.0),
+                (100.0, 500.0),
+                (110.0, 500.0),
+                (120.0, 500.0),
+                (130.0, 500.0),
+                (140.0, 500.0),
+                (150.0, 500.0),
+                (160.0, 500.0),
+                (170.0, 500.0),
+                (180.0, 500.0),
+                (190.0, 500.0),
+                (200.0, 500.0),
+                (210.0, 500.0),
+                (220.0, 500.0),
+                (230.0, 500.0),
+                (240.0, 500.0),
+                (250.0, 500.0),  # 2nd point
+                (260.0, 500.0),
+                (270.0, 500.0),
+                (280.0, 500.0),
+                (290.0, 500.0),
+                (300.0, 500.0),
+                (310.0, 500.0),
+                (320.0, 500.0),
+                (330.0, 500.0),
+                (340.0, 500.0),
+                (350.0, 500.0),
+                (360.0, 500.0),
+                (370.0, 500.0),
+                (380.0, 500.0),
+                (390.0, 500.0),
+                (400.0, 500.0),
+                (410.0, 500.0),
+                (420.0, 500.0),
+                (430.0, 500.0),
+                (440.0, 500.0),
+                (450.0, 500.0),
+                (460.0, 500.0),
+                (470.0, 500.0),
+                (480.0, 500.0),
+                (490.0, 500.0),
+                (500.0, 500.0),  # 3rd point
+                (500.0, 499.9),
+                (500.0, 490.0),
+                (500.0, 480.0),
+                (500.0, 470.0),
+                (500.0, 460.0),
+                (500.0, 450.0),
+                (500.0, 440.0),
+                (500.0, 430.0),
+                (500.0, 420.0),
+                (500.0, 410.0),
+                (500.0, 400.0),
+                (500.0, 390.0),
+                (500.0, 380.0),
+                (500.0, 370.0),
+                (500.0, 360.0),
+                (500.0, 350.0),
+                (500.0, 340.0),
+                (500.0, 330.0),
+                (500.0, 320.0),
+                (500.0, 310.0),
+                (500.0, 300.0),
+                (500.0, 290.0),
+                (500.0, 280.0),
+                (500.0, 270.0),
+                (500.0, 260.0),
+                (500.0, 250.0),  # 3rd point
+                (500.0, 240.0),
+                (500.0, 230.0),
+                (500.0, 220.0),
+                (500.0, 210.0),
+                (500.0, 200.0),
+                (500.0, 190.0),
+                (500.0, 180.0),
+                (500.0, 170.0),
+                (500.0, 160.0),
+                (500.0, 150.0),
+                (500.0, 140.0),
+                (500.0, 130.0),
+                (500.0, 120.0),
+                (500.0, 110.0),
+                (500.0, 100.0),  # 3rd point
+                (500.0, 90.0),
+                (500.0, 80.0),
+                (500.0, 70.0),
+                (500.0, 60.0),
+                (500.0, 50.0),
+                (500.0, 40.0),
+                (500.0, 30.0),
+                (500.0, 20.0),
+                (500.0, 10.0),
+                (500.0, 0.0),   # 4th point
+                (499.9, 0.0),
+                (490.0, 0.0),
+                (480.0, 0.0),
+                (470.0, 0.0),
+                (460.0, 0.0),
+                (450.0, 0.0),
+                (440.0, 0.0),
+                (430.0, 0.0),
+                (420.0, 0.0),
+                (410.0, 0.0),
+                (400.0, 0.0),
+                (390.0, 0.0),
+                (380.0, 0.0),
+                (370.0, 0.0),
+                (360.0, 0.0),
+                (350.0, 0.0),
+                (340.0, 0.0),
+                (330.0, 0.0),
+                (320.0, 0.0),
+                (310.0, 0.0),
+                (300.0, 0.0),
+                (290.0, 0.0),
+                (280.0, 0.0),
+                (270.0, 0.0),
+                (260.0, 0.0),
+                (250.0, 0.0),   # 3rd point
+                (240.0, 0.0),
+                (230.0, 0.0),
+                (220.0, 0.0),
+                (210.0, 0.0),
+                (200.0, 0.0),
+                (190.0, 0.0),
+                (180.0, 0.0),
+                (170.0, 0.0),
+                (160.0, 0.0),
+                (150.0, 0.0),
+                (140.0, 0.0),
+                (130.0, 0.0),
+                (120.0, 0.0),
+                (110.0, 0.0),
+                (100.0, 0.0),   # 3rd point
+                (90.0, 0.0),
+                (80.0, 0.0),
+                (70.0, 0.0),
+                (60.0, 0.0),
+                (50.0, 0.0),
+                (40.0, 0.0),
+                (30.0, 0.0),
+                (20.0, 0.0),
+                (10.0, 0.0),
+                (0.0, 0.0),     # 5th point
             ]    
             path1 = path_control_points
             #path1 = densify_polyline(path_control_points, spacing=20.0)
@@ -99,7 +298,7 @@ def run(robot: Robot) -> None:
             show_idle_leds(robot)
             print("[FSM] IDLE - Press BTN_1 to enter MOVING state.")
             if robot.get_button(Button.BTN_1):
-                LOOKAHEAD_DIST = 100.0 # Lookahead distance in mm (adjust as needed)
+                LOOKAHEAD_DIST = 50.0 # Lookahead distance in mm (adjust as needed)
                 planner1 = PurePursuitPlanner(
                     lookahead_dist=LOOKAHEAD_DIST, 
                     max_angular=1.5, # Max angular velocity in rad/s (adjust as needed)
@@ -114,36 +313,42 @@ def run(robot: Robot) -> None:
             """Start your code here"""
             # Step 1: Get current pose, including current coordinates and heading angle in degrees 
             # using robot.get_pose() function. Store the values in current_x, current_y, and current_theta_deg variables. 
-
+            current_x, current_y, current_theta_deg = robot.get_pose()
             # Step 2: Convert current_theta_deg to radians and store it in current_theta_rad variable.  
-
+            current_theta_rad = math.radians(current_theta_deg)
             # Step 3: Use the _advance_remaining_path() function to update the remaining_path variable 
             # by advancing it based on the current position (current_x, current_y) and an advance radius(20.0) mm.
             # This will take out the waypoints that are already passed (within 20mm of the current position), 
             # effectively "advancing" the path as the robot moves.
-
+            remaining_path = robot._advance_remaining_path(remaining_path, current_x, current_y, advance_radius_mm=LOOKAHEAD_DIST)
             # Step 4: Use the _lookahead_point() function to calculate the current pursuit point 
             # in your path, defined as (current_pursuit_x, current_pursuit_y)
-
+            current_pursuit_x, current_pursuit_y = planner1._lookahead_point(current_x, current_y, waypoints=remaining_path)
             # Step 5: Use the compute_velocity() function of the PurePursuitPlanner 
             # to calculate the linear and angular velocity commands
-
+            linear_velocity_cmd, angular_velocity_cmd = planner1.compute_velocity(
+                pose = (current_x, current_y, current_theta_rad),
+                waypoints = remaining_path,
+                max_linear = 80.0, # Max linear velocity in mm/s (adjust as needed)
+                )
             # Step 6: Use the robot.set_velocity() function to send the velocity commands to the robot.
-
+            robot.set_velocity(linear_velocity_cmd, math.degrees(angular_velocity_cmd)) # Convert angular velocity back to degrees/s for the robot interface
             # Step 7: Check if the current target point is reached using the 
             # CurrentTargetReached() function of the PurePursuitPlanner.
             # Just uncomment the following lines to enable the print statements.
-            """if planner1.CurrentTargetReached(current_pursuit_x, current_pursuit_y, current_x, current_y): 
+            if planner1.CurrentTargetReached(current_pursuit_x, current_pursuit_y, current_x, current_y): 
                 print("MOVING: Target reached! Stopping.")
                 robot.stop()
                 print("[FSM] IDLE")
-                state = "IDLE"       """        
+                state = "IDLE"         
             
             # Step 8: Print the current pose and current pursuit point to the console for debugging purposes.
             # Just uncomment the following lines to enable the print statements.
-            #print(f"Current Pose: ({current_x:.1f}, {current_y:.1f}, {current_theta_deg:.1f} deg)")
-            #print(f"Current Pursuit Point: ({current_pursuit_x:.1f}, {current_pursuit_y:.1f})")            
+            print(f"Current Pose: ({current_x:.1f}, {current_y:.1f}, {current_theta_deg:.1f} deg)")
+            print(f"Current Pursuit Point: ({current_pursuit_x:.1f}, {current_pursuit_y:.1f})")            
             print("Finish your code in Task 2") # Delete this line after you finish Task 2
+
+
             
         # FSM refresh rate control
         next_tick += period

@@ -60,30 +60,37 @@ def start_robot(robot: Robot) -> None:
 
 
 def my_sequence_1(robot: Robot, blocking: bool = True, timeout: float = None):
-    """
-    Example custom servo sequence.
-
-    Students can edit this function or copy it to create more sequences.
-
-    Example usage:
-        handle = my_sequence_1(robot, blocking=False)
-        if handle.is_finished():
-            print("sequence finished")
-    """
+    
+    # Updated helper: added 'task' parameter and changed robot.delay to task.sleep
+    def move_servo_smoothly(task, robot, servo_id, start_pos, end_pos, steps=10, delay=0.05):
+        step_size = (end_pos - start_pos) / steps
+        for i in range(steps + 1):
+            current_pos = start_pos + (step_size * i)
+            robot.set_servo(servo_id, current_pos)
+            # Use task.sleep so the robot doesn't freeze and can be cancelled
+            if not task.sleep(delay):
+                return False 
+        return True
 
     def worker(task: TaskHandle) -> None:
         robot.enable_servo(SEQUENCE_SERVO_1)
         robot.enable_servo(SEQUENCE_SERVO_2)
-        # Initial position is 63 degrees
-        robot.set_servo(SEQUENCE_SERVO_1, 63) # open position
+        
+        # Move from 0 to 90 degrees slowly (Step 4 from previous advice)
+        # We pass 'task' in here now
+        if not move_servo_smoothly(task, robot, SEQUENCE_SERVO_1, 0, 40, steps=20, delay=0.05):
+            return        
+
         if not task.sleep(0.5):
             return
 
         robot.set_servo(SEQUENCE_SERVO_2, 120)
-        if not task.sleep(0.5):
+        
+        # This is your 3-second hold
+        if not task.sleep(3.0):
             return
-
-        robot.set_servo(SEQUENCE_SERVO_1, 0)
+        time.sleep(3.0)
+        robot.set_servo(SEQUENCE_SERVO_1, 90)
         if not task.sleep(0.5):
             return
 
@@ -95,7 +102,6 @@ def my_sequence_1(robot: Robot, blocking: bool = True, timeout: float = None):
         robot.disable_servo(SEQUENCE_SERVO_2)
 
     return run_task(worker, blocking=blocking, timeout=timeout)
-
 
 def run(robot: Robot) -> None:
     configure_robot(robot)
@@ -132,7 +138,7 @@ def run(robot: Robot) -> None:
                 state = "IDLE"
 
             elif sequence_handle is not None and sequence_handle.is_finished():
-                sequence_handle = Nones
+                sequence_handle = None
                 print("[FSM] IDLE")
                 state = "IDLE"
 
