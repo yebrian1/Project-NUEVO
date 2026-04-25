@@ -234,8 +234,7 @@ class PurePursuitPlannerWithAvoidance(PathPlanner):
         # Step 1: Obtain current state: Obtain pose and obstacles in robot frame based on your lidar and robot configurations.
         x, y, theta = pose
         if len(obstacles_r) > 0:
-            # lidar orientation due to installation is 180 deg rotated from robot forward, so rotate obstacles accordingly
-            # there is a distance between the lidar and the robot center.
+            # lidar orientation due to installation is 180 deg rotated from robot forward, so rotate obstacles accordingly.
             obstacles_r = (np.array([[np.cos(np.pi), -np.sin(np.pi)], [np.sin(np.pi), np.cos(np.pi)]]) @ obstacles_r.T).T 
             
             # since some robot parts (e.g., the arm) may cause obstacles to be detected, we can filter out those obstacles behind the lidar.
