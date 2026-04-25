@@ -73,7 +73,7 @@ def run(robot: Robot) -> None:
             ]
             path = densify_polyline(path_control_points, spacing=500.0)
 
-            robot._nav_follow_pp_path(
+            robot._nav_follow_pp_path2(
                 lookahead_distance=100.0,
                 max_linear_speed=130.0,
                 max_angular_speed=1.5,

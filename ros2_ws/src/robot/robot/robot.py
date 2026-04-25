@@ -1673,7 +1673,7 @@ class Robot:
 
         return "MOVING"
 
-    def _nav_follow_pp_path_lane(
+    def _nav_follow_pp_path(
         self,
         lookahead_distance: float,
         max_linear_speed: float,
@@ -1685,12 +1685,13 @@ class Robot:
         avoidance_delay: int,
         offset: float,
         alpha_Ld: float,
-        x_w: float = 0.0,
+        x_L: float = 0.0,
+        lane_width: float = 600.0,
         obstacle_avoidance: bool = True,
     ) -> None:
 
-        from robot.path_planner import PurePursuitPlannerWithAvoidanceLane
-        self.planner = PurePursuitPlannerWithAvoidanceLane(
+        from robot.path_planner import PurePursuitPlannerWithAvoidance
+        self.planner = PurePursuitPlannerWithAvoidance(
             lookahead_distance=lookahead_distance,
             max_linear_speed=max_linear_speed,
             max_angular_speed=max_angular_speed,
@@ -1700,12 +1701,13 @@ class Robot:
             safe_dist=safe_dist,
             avoidance_delay=avoidance_delay,
             offset=offset,
-            x_w=x_w,
+            x_L=x_L,
+            lane_width=lane_width,
             alpha_Ld=alpha_Ld,
             obstacle_avoidance=obstacle_avoidance, 
         )
 
-    def _nav_follow_pp_path(
+    def _nav_follow_pp_path2(
         self,
         lookahead_distance: float,
         max_linear_speed: float,
@@ -1723,8 +1725,8 @@ class Robot:
         obstacle_avoidance: bool = True,
     ) -> None:
 
-        from robot.path_planner import PurePursuitPlannerWithAvoidance
-        self.planner = PurePursuitPlannerWithAvoidance(
+        from robot.path_planner import PurePursuitPlannerWithAvoidance2
+        self.planner = PurePursuitPlannerWithAvoidance2(
             lookahead_distance=lookahead_distance,
             max_linear_speed=max_linear_speed,
             max_angular_speed=max_angular_speed,
@@ -1740,9 +1742,6 @@ class Robot:
             alpha_angle=alpha_angle,
             obstacle_avoidance=obstacle_avoidance,
         )
-    
-    def _set_pp_path(self, path):
-        self.planner.set_path(path)
     
     def _nav_follow_pp_path_loop(self):
         with self._lock:
