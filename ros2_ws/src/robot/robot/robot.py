@@ -171,7 +171,7 @@ class Robot:
     DEFAULT_RIGHT_WHEEL_MOTOR: int = int(Motor.DC_M2)
     DEFAULT_LEFT_WHEEL_DIR_INVERTED: bool = False
     DEFAULT_RIGHT_WHEEL_DIR_INVERTED: bool = True
-    POSITION_ALPHA = 0.10  # complementary filter GPS weight for position fusion
+    POSITION_ALPHA = 0.5  # complementary filter GPS weight for position fusion
     ORIENTATION_ALPHA = 0.0  # complementary filter IMU weight for orientation fusion (IMU is not working well, so default to pure odometry for now)
     TAG_X_OFFSET_MM = 0.0  # ArUco tag position in robot body frame x (mm, forward)
     TAG_Y_OFFSET_MM = 0.0  # ArUco tag position in robot body frame y (mm, left)
@@ -222,7 +222,7 @@ class Robot:
         self._orientation_fusion:  OrientationComplementaryFilter          = OrientationComplementaryFilter(alpha=self.ORIENTATION_ALPHA)
         self._pose:    tuple = (0.0, 0.0, 0.0)  # x_mm, y_mm, theta_rad (raw odometry)
         # ── GPS position fusion ───────────────────────────────────────────────
-        self._tracked_tag_id:    int         = -1    # tag to track (-1 = any)
+        self._tracked_tag_id:    int         = 23    # tag to track (-1 = any)
         self._gps_x_mm:          float       = 0.0  # latest GPS x in mm (arena frame)
         self._gps_y_mm:          float       = 0.0  # latest GPS y in mm (arena frame)
         self._gps_last_time:     float       = 0.0   # monotonic timestamp of last GPS fix
