@@ -76,25 +76,34 @@ def run(robot: Robot) -> None:
             # ]
             # left lane
             path_control_points = [
-                (300.0,   0.0),
-                (300.0, 2500.0),
-                (1300.0, 2500.0),
+               (300.0, 0.0),
+               (300.0, 250.0),
+               (300.0, 500.0),
+               (300.0, 750.0),
+               (300.0, 1000.0),
+               (300.0, 1250.0),
+               (300.0, 1500.0),
+               (300.0, 1750.0),
+               (300.0, 2000.0),
+               (300.0, 2250.0),
+               (300.0, 2500.0),
+                #(1300.0, 2500.0),
             ]
 
             path = densify_polyline(path_control_points, spacing=400.0)
 
             robot._nav_follow_pp_path(
-                lookahead_distance=100.0,
-                max_linear_speed=140.0,
-                max_angular_speed=1.5,
+                lookahead_distance=250.0,
+                max_linear_speed=150.0,
+                max_angular_speed=1.8,
                 goal_tolerance=20.0,
                 obstacles_range=450.0,
                 view_angle=math.radians(70.0),
-                safe_dist=250.0,
+                safe_dist=200.0,
                 avoidance_delay=150,
-                alpha_Ld=0.7,
+                alpha_Ld=0.4,
                 offset=270.0,
-                lane_width=500.0,
+                lane_width=350.0,
                 obstacle_avoidance=True,
                 x_L=300.0,
             )

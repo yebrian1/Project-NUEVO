@@ -2118,7 +2118,7 @@ class Robot:
         if obstacles_mm.size != 0:
             # lidar orientation due to installation is 180 deg rotated from robot forward, so rotate obstacles accordingly
             lidar_offset_mm = 100.0
-            obstacles = (np.array([[np.cos(np.pi), -np.sin(np.pi)], [np.sin(np.pi), np.cos(np.pi)]]) @ obstacles_mm.T).T + np.array([[lidar_offset_mm, 0],])
+            obstacles = (np.array([[np.cos(-np.pi), -np.sin(-np.pi)], [np.sin(-np.pi), np.cos(-np.pi)]])  @ obstacles_mm.T).T + np.array([[lidar_offset_mm, 0],])
             # since some robot parts (e.g., the arm) may cause obstacles to be detected, we can filter out those obstacles behind the lidar.
             obstacles = obstacles[obstacles[:,0] > 0,:]
             # transform obstacles from robot frame to world frame.
