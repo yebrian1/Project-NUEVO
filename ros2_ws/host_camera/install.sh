@@ -90,8 +90,8 @@ fi
 
 # shellcheck disable=SC1090
 source "$system_env"
-: "${PI_CAMERA_DEVICE:=/dev/video10}"
-: "${PI_CAMERA_VIDEO_NR:=10}"
+: "${PI_CAMERA_DEVICE:=/dev/video0}"
+: "${PI_CAMERA_VIDEO_NR:=0}"
 : "${PI_CAMERA_CARD_LABEL:=Pi Camera}"
 
 video_node="/dev/video${PI_CAMERA_VIDEO_NR}"

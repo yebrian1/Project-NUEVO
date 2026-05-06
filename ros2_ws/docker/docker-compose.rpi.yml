@@ -66,7 +66,7 @@ services:
       - NUEVO_USERS_FILE=/data/users.json
       - NUEVO_SERIAL_PORT=/dev/ttyAMA0
       - NUEVO_SERIAL_BAUD=200000
-      - PI_CAMERA_DEVICE=/dev/video10
+      - PI_CAMERA_DEVICE=/dev/video0
 
 
     restart: unless-stopped

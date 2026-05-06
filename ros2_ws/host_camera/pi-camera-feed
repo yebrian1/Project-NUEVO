@@ -7,8 +7,8 @@ if [[ -r "$env_file" ]]; then
     source "$env_file"
 fi
 
-: "${PI_CAMERA_DEVICE:=/dev/video10}"
-: "${PI_CAMERA_VIDEO_NR:=10}"
+: "${PI_CAMERA_DEVICE:=/dev/video0}"
+: "${PI_CAMERA_VIDEO_NR:=0}"
 : "${PI_CAMERA_CARD_LABEL:=Pi Camera}"
 : "${PI_CAMERA_WIDTH:=640}"
 : "${PI_CAMERA_HEIGHT:=480}"
@@ -49,22 +49,16 @@ done
 [[ -c "$PI_CAMERA_DEVICE" ]] || die "$PI_CAMERA_DEVICE is not available"
 
 case "$PI_CAMERA_PRODUCER" in
-    rpicam_ffmpeg_yuyv)
+    rpicam_ffmpeg_yuyv|usb_ffmpeg_yuyv)
         log "feeding $PI_CAMERA_DEVICE at ${PI_CAMERA_WIDTH}x${PI_CAMERA_HEIGHT}@${PI_CAMERA_FPS} as $PI_CAMERA_PIXEL_FORMAT"
-        rpicam-vid \
-            --nopreview \
-            --width "$PI_CAMERA_WIDTH" \
-            --height "$PI_CAMERA_HEIGHT" \
-            --framerate "$PI_CAMERA_FPS" \
-            --codec mjpeg \
-            --timeout 0 \
-            --output - |
         ffmpeg \
             -nostdin \
             -loglevel warning \
-            -re \
-            -f mjpeg \
-            -i pipe:0 \
+            -f v4l2 \
+            -input_format yuyv422 \
+            -video_size "${PI_CAMERA_WIDTH}x${PI_CAMERA_HEIGHT}" \
+            -framerate "$PI_CAMERA_FPS" \
+            -i /dev/video0 \
             -vf "scale=${PI_CAMERA_WIDTH}:${PI_CAMERA_HEIGHT},format=yuyv422" \
             -vcodec rawvideo \
             -pix_fmt yuyv422 \

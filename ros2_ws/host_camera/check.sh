@@ -12,7 +12,7 @@ elif [[ -r "${script_dir}/pi-camera.env" ]]; then
     source "${script_dir}/pi-camera.env"
 fi
 
-: "${PI_CAMERA_DEVICE:=/dev/video10}"
+: "${PI_CAMERA_DEVICE:=/dev/video0}"
 : "${PI_CAMERA_CARD_LABEL:=Pi Camera}"
 : "${PI_CAMERA_DOCKER_IMAGE:=ros2-runtime:latest}"
 
