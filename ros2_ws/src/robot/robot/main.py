@@ -33,14 +33,14 @@ RIGHT_WHEEL_DIR_INVERTED = True
 # Actuator Configuration (Arm & Gripper)
 # ---------------------------------------------------------------------------
 GRIPPER_CHANNEL   = ServoChannel.CH_1
-GRIPPER_OPEN_DEG  = 90.0   
-GRIPPER_CLOSE_DEG = 180.0  
+GRIPPER_OPEN_DEG  = 150.0   
+GRIPPER_CLOSE_DEG = 50.0  
 
 ARM_STEPPER        = Stepper.STEPPER_1
 arm_up_steps       = -2000
-arm_down_steps     = 1000
-ARM_MAX_VELOCITY   = 800    
-ARM_ACCELERATION   = 400    
+arm_down_steps     = 1600
+ARM_MAX_VELOCITY   = 400    
+ARM_ACCELERATION   = 200    
 ARM_HOME_VELOCITY  = 300    
 
 # ---------------------------------------------------------------------------
@@ -76,23 +76,6 @@ def start_robot(robot: Robot) -> None:
     robot.enable_motor(RIGHT_WHEEL_MOTOR)
     robot.reset_odometry()
     robot.wait_for_pose_update(timeout=0.2)
-
-def home_arm(robot: Robot) -> None:
-    robot.step_set_config(
-        ARM_STEPPER,
-        max_velocity=ARM_MAX_VELOCITY,
-        acceleration=ARM_ACCELERATION,
-    )
-    ok = robot.step_home(
-        ARM_STEPPER,
-        direction=-1,
-        home_velocity=ARM_HOME_VELOCITY,
-        backoff_steps=50,
-        blocking=True,
-        timeout=15.0,
-    )
-    if not ok:
-        print("[WARN] arm homing timed out — check limit switch")
 
 # --- LED Helpers ---
 def show_idle_leds(robot: Robot) -> None:
@@ -184,8 +167,12 @@ def run(robot: Robot) -> None:
             start_robot(robot)
             dim_all_leds(robot)
             
-            print("[FSM] HOMING arm — do not obstruct the arm")
-            home_arm(robot)
+            print("[FSM] Configuring arm (homing disabled)...")
+            robot.step_set_config(
+                ARM_STEPPER,
+                max_velocity=ARM_MAX_VELOCITY,
+                acceleration=ARM_ACCELERATION,
+            )
             
             print("[FSM] Loading path coordinates into memory...")
             path_control_points = [
@@ -219,7 +206,7 @@ def run(robot: Robot) -> None:
                 (500.0, 170.0), (500.0, 160.0), (500.0, 150.0), (500.0, 140.0), (500.0, 130.0),
                 (500.0, 120.0), (500.0, 110.0), (500.0, 100.0), (500.0, 90.0), (500.0, 80.0),
                 (500.0, 70.0), (500.0, 60.0), (500.0, 50.0), (500.0, 40.0), (500.0, 30.0),
-                (500.0, 20.0), (500.0, 10.0), (500.0, 0.0), (499.9, 0.0), (490.0, 0.0),
+                (500.0, 20.0), (500.0, 10.0), (50.0, 0.0), (499.9, 0.0), (490.0, 0.0),
                 (480.0, 0.0), (470.0, 0.0), (460.0, 0.0), (450.0, 0.0), (440.0, 0.0),
                 (430.0, 0.0), (420.0, 0.0), (410.0, 0.0), (400.0, 0.0), (390.0, 0.0),
                 (380.0, 0.0), (370.0, 0.0), (360.0, 0.0), (350.0, 0.0), (340.0, 0.0),
@@ -263,6 +250,167 @@ def run(robot: Robot) -> None:
                 state = "WATCHING"
             elif robot.get_button(Button.BTN_8):
                 state = "CMD_START_OBSTACLE_AVOIDANCE"
+            elif robot.get_button(Button.BTN_10):
+                state = "CMD_SEQUENCE_MOVE"
+
+        # ── DISCRETE COMMAND: SEQUENCE MOVE ───────────────────────────────
+        elif state == "CMD_SEQUENCE_MOVE":
+            show_running_leds(robot)
+            
+            # Diagnostic helper
+            def check_safety(step_name: str) -> bool:
+                power = robot.get_power()
+                vbat = power.battery_mv / 1000.0 if power else 0.0
+                cur_st = robot.get_state()
+                if cur_st in (FirmwareState.ERROR, FirmwareState.ESTOP):
+                    print(f"[ERROR] Safety check FAILED at {step_name}! State: {FirmwareState(cur_st).name}, Battery: {vbat:.2f}V")
+                    return False
+                return True
+
+            if not check_safety("START"):
+                state = "IDLE"
+                continue
+
+            print("[ACTION] Executing Pick and Maneuver Sequence")
+            
+            # --- PHASE 1: PICK AND MOVE ---
+            # 1. Close gripper
+            print("[ACTION] Closing gripper...")
+            robot.enable_servo(GRIPPER_CHANNEL)
+            robot.set_servo(GRIPPER_CHANNEL, GRIPPER_CLOSE_DEG)
+            time.sleep(0.5)
+            
+            # 2. Lift arm
+            print("[ACTION] Lifting arm...")
+            robot.step_enable(ARM_STEPPER)
+            if not robot.step_move(ARM_STEPPER, steps=arm_up_steps, blocking=True, timeout=10.0) or not check_safety("LIFT 1"):
+                state = "IDLE"
+                continue
+            
+            # 3. Movement Sequence 1
+            print("[ACTION] Maneuvering 1: Back 100 -> Right 90 -> Forward 170 -> Left 90 -> Forward 99")
+            moves1 = [
+                ("Back", lambda: robot.move_backward(100.0, 100.0, 20.0, blocking=False)),
+                ("Turn R 90", lambda: robot.turn_by(-90.0, blocking=False)),
+                ("Forward 170", lambda: robot.move_forward(170.0, 100.0, 20.0, blocking=False)),
+                ("Turn L 90", lambda: robot.turn_by(90.0, blocking=False)),
+                ("Forward 99", lambda: robot.move_forward(99.0, 100.0, 20.0, blocking=False)),
+            ]
+            
+            aborted = False
+            for name, move_fn in moves1:
+                print(f"[ACTION]   -> {name}...")
+                handle = move_fn()
+                if not handle.wait(timeout=15.0) or not check_safety(f"MOVE1_{name}"):
+                    print(f"[ERROR] {name} failed or timed out!")
+                    robot.stop()
+                    aborted = True
+                    break
+            if aborted:
+                state = "IDLE"
+                continue
+            
+            # 4. Lower arm
+            print("[ACTION] Lowering arm...")
+            robot.step_enable(ARM_STEPPER)
+            if not robot.step_move(ARM_STEPPER, steps=arm_down_steps, blocking=True, timeout=10.0) or not check_safety("LOWER 1"):
+                state = "IDLE"
+                continue
+            
+            # 5. Open gripper
+            print("[ACTION] Opening gripper...")
+            robot.enable_servo(GRIPPER_CHANNEL)
+            robot.set_servo(GRIPPER_CHANNEL, GRIPPER_OPEN_DEG)
+            time.sleep(0.5)
+
+            # --- PHASE 2: RETURN AND SECOND PICK ---
+            # 6. Raise arm
+            print("[ACTION] Raising arm...")
+            robot.step_enable(ARM_STEPPER)
+            if not robot.step_move(ARM_STEPPER, steps=-1600, blocking=True, timeout=10.0) or not check_safety("RAISE 1"):
+                state = "IDLE"
+                continue
+
+            # 7. Movement Sequence 2 (Return)
+            print("[ACTION] Maneuvering 2 (Return): Back 100 -> Left 90 -> Forward 310 -> Right 90 -> Forward 99")
+            moves2 = [
+                ("Back", lambda: robot.move_backward(100.0, 100.0, 20.0, blocking=False)),
+                ("Turn L 90", lambda: robot.turn_by(90.0, blocking=False)),
+                ("Forward 310", lambda: robot.move_forward(310.0, 100.0, 20.0, blocking=False)),
+                ("Turn R 90", lambda: robot.turn_by(-90.0, blocking=False)),
+                ("Forward 99", lambda: robot.move_forward(99.0, 100.0, 20.0, blocking=False)),
+            ]
+            
+            for name, move_fn in moves2:
+                print(f"[ACTION]   -> {name}...")
+                handle = move_fn()
+                if not handle.wait(timeout=15.0) or not check_safety(f"MOVE2_{name}"):
+                    print(f"[ERROR] {name} failed or timed out!")
+                    robot.stop()
+                    aborted = True
+                    break
+            if aborted:
+                state = "IDLE"
+                continue
+
+            # 8. Lower arm
+            print("[ACTION] Lowering arm...")
+            robot.step_enable(ARM_STEPPER)
+            if not robot.step_move(ARM_STEPPER, steps=2000, blocking=True, timeout=10.0) or not check_safety("LOWER 2"):
+                state = "IDLE"
+                continue
+
+            # 9. Close gripper (Second Pick)
+            print("[ACTION] Closing gripper (Second Pick)...")
+            robot.enable_servo(GRIPPER_CHANNEL)
+            robot.set_servo(GRIPPER_CHANNEL, 65)
+            time.sleep(0.5)
+
+            print("[ACTION] Lifting arm...")
+            robot.step_enable(ARM_STEPPER)
+            if not robot.step_move(ARM_STEPPER, steps=arm_up_steps, blocking=True, timeout=10.0) or not check_safety("LIFT 2"):
+                state = "IDLE"
+                continue
+
+            # --- PHASE 3: FINAL DELIVERY ---
+            # 10. Movement Sequence 3 (Final Delivery)
+            print("[ACTION] Maneuvering 3: Back 100 -> Right 90 -> Forward 310 -> Left 90 -> Forward 99")
+            moves3 = [
+                ("Back", lambda: robot.move_backward(100.0, 100.0, 20.0, blocking=False)),
+                ("Turn R 90", lambda: robot.turn_by(-90.0, blocking=False)),
+                ("Forward 310", lambda: robot.move_forward(310.0, 100.0, 20.0, blocking=False)),
+                ("Turn L 90", lambda: robot.turn_by(90.0, blocking=False)),
+                ("Forward 99", lambda: robot.move_forward(99.0, 100.0, 20.0, blocking=False)),
+            ]
+            
+            for name, move_fn in moves3:
+                print(f"[ACTION]   -> {name}...")
+                handle = move_fn()
+                if not handle.wait(timeout=15.0) or not check_safety(f"MOVE3_{name}"):
+                    print(f"[ERROR] {name} failed or timed out!")
+                    robot.stop()
+                    aborted = True
+                    break
+            if aborted:
+                state = "IDLE"
+                continue
+
+            # 11. Lower arm
+            print("[ACTION] Lowering arm...")
+            robot.step_enable(ARM_STEPPER)
+            if not robot.step_move(ARM_STEPPER, steps=1000, blocking=True, timeout=10.0) or not check_safety("LOWER 3"):
+                state = "IDLE"
+                continue
+
+            # 12. Open gripper
+            print("[ACTION] Opening gripper...")
+            robot.enable_servo(GRIPPER_CHANNEL)
+            robot.set_servo(GRIPPER_CHANNEL, GRIPPER_OPEN_DEG)
+            time.sleep(0.5)
+
+            print("[ACTION] Maneuver complete. Returning to IDLE.")
+            robot.stop()
+            state = "IDLE"
 
         # ── CAMERA WATCHING (Traffic Light) ───────────────────────────────
         elif state == "WATCHING":
@@ -422,8 +570,7 @@ def run(robot: Robot) -> None:
         elif state == "ERROR_STEPPER":
             show_error_leds(robot)
             if robot.get_button(Button.BTN_2):
-                print("[RECOVERY] Clearing stepper error. Homing arm...")
-                home_arm(robot) 
+                print("[RECOVERY] Clearing stepper error. Manually check arm...")
                 state = "IDLE"
 
         # ── ERROR: GRIPPER ────────────────────────────────────────────────

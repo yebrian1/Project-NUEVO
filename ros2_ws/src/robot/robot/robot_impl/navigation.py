@@ -568,6 +568,7 @@ class NavigationMixin:
         blocking: bool = True,
         tolerance_deg: float = 2.0,
         timeout: float = None,
+        max_angular_speed: float = 0.5,
     ) -> MotionHandle:
         """
         Rotate to an absolute heading. Firmware must be in RUNNING state.
@@ -579,7 +580,7 @@ class NavigationMixin:
         tol_rad    = math.radians(tolerance_deg)
 
         def target():
-            self._turn_to_heading(target_rad, tol_rad, max_angular_rad=1.0)
+            self._turn_to_heading(target_rad, tol_rad, max_angular_rad=max_angular_speed)
 
         return self._start_nav(target, blocking, timeout)
 
@@ -589,11 +590,13 @@ class NavigationMixin:
         blocking: bool = True,
         tolerance_deg: float = 2.0,
         timeout: float = None,
+        max_angular_speed: float = 0.3,
     ) -> MotionHandle:
         """Rotate by delta_deg relative to current heading."""
         _, _, cur_deg = self.get_pose()
         return self.turn_to(cur_deg + delta_deg, blocking=blocking,
-                            tolerance_deg=tolerance_deg, timeout=timeout)
+                            tolerance_deg=tolerance_deg, timeout=timeout,
+                            max_angular_speed=max_angular_speed)
 
     def purepursuit_follow_path(
         self,
@@ -1157,7 +1160,7 @@ class NavigationMixin:
         self,
         target_rad: float,
         tolerance_rad: float,
-        max_angular_rad: float = 2.0,
+        max_angular_rad: float = 0.5,
         update_hz: float = float(DEFAULT_NAV_HZ),
     ) -> None:
         """Navigation thread body: rotate to target_rad in place."""

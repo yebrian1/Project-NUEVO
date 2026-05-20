@@ -288,7 +288,7 @@ def run(robot: Robot) -> None:
             remaining_path = path_control_points.copy()
             planner1 = PurePursuitPlanner(
                 lookahead_dist=LOOKAHEAD_DIST, 
-                max_angular=1.5, 
+                max_angular=0.8, 
                 goal_tolerance=20.0, 
             )
             print("[ACTION] Path planned. Engaging pursuit algorithms...")
