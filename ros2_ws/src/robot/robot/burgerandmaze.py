@@ -1,6 +1,7 @@
 from __future__ import annotations
 import time
 import math
+import numpy as np
 
 from robot.hardware_map import (
     Button,
@@ -14,11 +15,12 @@ from robot.hardware_map import (
 from robot.robot import FirmwareState, Robot, Unit
 from robot.path_planner2 import PurePursuitPlanner, generate_maze_waypoints
 from robot.util import densify_polyline
+from robot.lidar_helpers import get_front_distance, get_wall_alignment, save_lidar_plot, print_lidar_stats
 
 # ---------------------------------------------------------------------------
 # Robot Build & Drive Configuration
 # ---------------------------------------------------------------------------
-TAG_ID = 11 
+TAG_ID = 21 # Updated to user's GPS ArUco tag
 POSITION_UNIT = Unit.MM
 WHEEL_DIAMETER = 74.0
 WHEEL_BASE = 333.0
@@ -28,6 +30,12 @@ LEFT_WHEEL_MOTOR = Motor.DC_M1
 LEFT_WHEEL_DIR_INVERTED = False
 RIGHT_WHEEL_MOTOR = Motor.DC_M2
 RIGHT_WHEEL_DIR_INVERTED = True
+
+# --- Speed Configuration (Lowered for safer open-loop testing) ---
+DEFAULT_LINEAR_SPEED  = 60.0  # mm/s
+DEFAULT_ANGULAR_SPEED = 0.2   # rad/s (~11 deg/s)
+MAZE_LINEAR_SPEED     = 60.0  # mm/s
+MAZE_ANGULAR_LIMIT    = 0.8   # rad/s
 
 # ---------------------------------------------------------------------------
 # Actuator Configuration (Arm & Gripper)
@@ -56,6 +64,10 @@ LED_BRIGHTNESS = 255
 def configure_robot(robot: Robot) -> None:
     robot.set_unit(POSITION_UNIT)
     robot.enable_vision() 
+    robot.enable_gps() # Enable GPS/ArUco fusion
+    robot.enable_lidar() # Enable LiDAR for feedback
+    robot.set_lidar_filter(range_min_mm=0.0)
+
     robot.set_odometry_parameters(
         wheel_diameter=WHEEL_DIAMETER,
         wheel_base=WHEEL_BASE,
@@ -66,6 +78,9 @@ def configure_robot(robot: Robot) -> None:
         right_motor_dir_inverted=RIGHT_WHEEL_DIR_INVERTED,
     )
     robot.set_tracked_tag_id(TAG_ID)
+     # Use GPS tangent to correct heading drift, GPS position to correct odometry drift
+    robot.enable_gps_tangent_heading(alpha=0.15, min_displacement_mm=200.0)
+    robot.set_position_fusion_alpha(0.10)
 
 def start_robot(robot: Robot) -> None:
     current = robot.get_state()
@@ -156,15 +171,20 @@ def run(robot: Robot) -> None:
     # Diagnostic helper
     def check_safety(step_name: str) -> bool:
         power = robot.get_power()
-        vbat = power.battery_mv / 1000.0 if power else 0.0
         cur_st = robot.get_state()
         if cur_st in (FirmwareState.ERROR, FirmwareState.ESTOP):
-            print(f"[ERROR] Safety check FAILED at {step_name}! State: {FirmwareState(cur_st).name}, Battery: {vbat:.2f}V")
             return False
         return True
 
     while True:
         
+        # --- LIDAR DEBUG BUTTONS (IDLE ONLY) ---
+        if state == "IDLE":
+            if robot.was_button_pressed(Button.BTN_1):
+                print_lidar_stats(robot, "MANUAL_CHECK")
+            if robot.was_button_pressed(Button.BTN_3):
+                save_lidar_plot(robot)
+
         # --- Cancellation / Safety Check ---
         if state not in ["INIT", "IDLE", "ERROR_STEPPER", "ERROR_GRIPPER"] and robot.get_button(Button.BTN_2):
             print("[FSM] OPERATION CANCELLED! Stopping motors and returning to IDLE.")
@@ -215,8 +235,7 @@ def run(robot: Robot) -> None:
                 (500.0, 220.0), (500.0, 210.0), (500.0, 200.0), (500.0, 190.0), (500.0, 180.0),
                 (500.0, 170.0), (500.0, 160.0), (500.0, 150.0), (500.0, 140.0), (500.0, 130.0),
                 (500.0, 120.0), (500.0, 110.0), (500.0, 100.0), (500.0, 90.0), (500.0, 80.0),
-                (500.0, 70.0), (500.0, 60.0), (500.0, 50.0), (500.0, 40.0), (500.0, 30.0),
-                (500.0, 20.0), (500.0, 10.0), (50.0, 0.0), (499.9, 0.0), (490.0, 0.0),
+                (500.0, 70.0), (500.0, 60.0), (50.0, 0.0), (499.9, 0.0), (490.0, 0.0),
                 (480.0, 0.0), (470.0, 0.0), (460.0, 0.0), (450.0, 0.0), (440.0, 0.0),
                 (430.0, 0.0), (420.0, 0.0), (410.0, 0.0), (400.0, 0.0), (390.0, 0.0),
                 (380.0, 0.0), (370.0, 0.0), (360.0, 0.0), (350.0, 0.0), (340.0, 0.0),
@@ -271,9 +290,9 @@ def run(robot: Robot) -> None:
             
             print("[ACTION] Initial Maneuver: Move Back 70mm -> Turn Right 90deg")
             # 1. Move backward discretely
-            robot.move_backward(70.0, 100.0, 20.0, blocking=False).wait(timeout=10.0)
+            robot.move_backward(70.0, DEFAULT_LINEAR_SPEED, 20.0, blocking=False).wait(timeout=10.0)
             # 2. Turn right 90 degrees discretely
-            robot.turn_by(-90.0, blocking=False).wait(timeout=10.0)
+            robot.turn_by(-90.0, max_angular_speed=DEFAULT_ANGULAR_SPEED, blocking=False).wait(timeout=10.0)
             
             cur_x, cur_y, cur_theta = robot.get_pose()
             print(f"[ACTION] Starting Pure Pursuit Maze from ({cur_x:.1f}, {cur_y:.1f}) @ {cur_theta:.1f}deg")
@@ -284,7 +303,7 @@ def run(robot: Robot) -> None:
             # Use the bidirectional planner from path_planner2
             planner1 = PurePursuitPlanner(
                 lookahead_dist=120.0, 
-                max_angular=1.5, 
+                max_angular=MAZE_ANGULAR_LIMIT, 
                 goal_tolerance=30.0, 
             )
             print("[ACTION] Maze waypoints set. Engaging pure pursuit...")
@@ -308,7 +327,7 @@ def run(robot: Robot) -> None:
             linear_velocity_cmd, angular_velocity_cmd = planner1.compute_velocity(
                 pose = (current_x, current_y, current_theta_rad),
                 waypoints = remaining_path,
-                max_linear = 100.0, 
+                max_linear = MAZE_LINEAR_SPEED, 
             )
             robot.set_velocity(linear_velocity_cmd, math.degrees(angular_velocity_cmd)) 
             
@@ -331,6 +350,7 @@ def run(robot: Robot) -> None:
             
             # --- PHASE 1: PICK AND MOVE ---
             # 1. Close gripper
+            #first burger pickup
             print("[ACTION] Closing gripper...")
             robot.enable_servo(GRIPPER_CHANNEL)
             robot.set_servo(GRIPPER_CHANNEL, GRIPPER_CLOSE_DEG)
@@ -344,17 +364,22 @@ def run(robot: Robot) -> None:
                 continue
             
             # 3. Movement Sequence 1
-            print("[ACTION] Maneuvering 1: Back 100 -> Right 90 -> Forward 170 -> Left 90 -> Forward 99")
+            print("[ACTION] Maneuvering 1: Back 100 -> Right 90 -> Forward 160 -> Left 90 -> Forward 99")
             moves1 = [
-                ("Back", lambda: robot.move_backward(100.0, 100.0, 20.0, blocking=False)),
-                ("Turn R 90", lambda: robot.turn_by(-90.0, blocking=False)),
-                ("Forward 170", lambda: robot.move_forward(170.0, 100.0, 20.0, blocking=False)),
-                ("Turn L 90", lambda: robot.turn_by(90.0, blocking=False)),
-                ("Forward 99", lambda: robot.move_forward(99.0, 100.0, 20.0, blocking=False)),
+                ("Back", lambda: robot.move_backward(100.0, DEFAULT_LINEAR_SPEED, 20.0, blocking=False)),
+                ("Check Lidar After Back", None), 
+                ("Turn R 90", lambda: robot.turn_by(-83.0, max_angular_speed=DEFAULT_ANGULAR_SPEED, blocking=False)),
+                ("Forward 160", lambda: robot.move_forward(152.5, DEFAULT_LINEAR_SPEED, 20.0, blocking=False)),
+                ("Turn L 90", lambda: robot.turn_by(83.0, max_angular_speed=DEFAULT_ANGULAR_SPEED, blocking=False)),
+                ("Check Lidar Before Drive In", None), 
+                ("Forward 99", lambda: robot.move_forward(99.0, DEFAULT_LINEAR_SPEED, 20.0, blocking=False)),
             ]
             
             aborted = False
             for name, move_fn in moves1:
+                if move_fn is None:
+                    print_lidar_stats(robot, name)
+                    continue
                 print(f"[ACTION]   -> {name}...")
                 handle = move_fn()
                 if not handle.wait(timeout=15.0) or not check_safety(f"MOVE1_{name}"):
@@ -388,16 +413,21 @@ def run(robot: Robot) -> None:
                 continue
 
             # 7. Movement Sequence 2 (Return)
-            print("[ACTION] Maneuvering 2 (Return): Back 100 -> Left 90 -> Forward 310 -> Right 90 -> Forward 99")
+            print("[ACTION] Maneuvering 2 (Return): Back 100 -> Left 90 -> Forward 320 -> Right 90 -> Forward 99")
             moves2 = [
-                ("Back", lambda: robot.move_backward(100.0, 100.0, 20.0, blocking=False)),
-                ("Turn L 90", lambda: robot.turn_by(90.0, blocking=False)),
-                ("Forward 310", lambda: robot.move_forward(310.0, 100.0, 20.0, blocking=False)),
-                ("Turn R 90", lambda: robot.turn_by(-90.0, blocking=False)),
-                ("Forward 99", lambda: robot.move_forward(99.0, 100.0, 20.0, blocking=False)),
+                ("Back", lambda: robot.move_backward(100.0, DEFAULT_LINEAR_SPEED, 20.0, blocking=False)),
+                ("Check Lidar After Back", None),
+                ("Turn L 90", lambda: robot.turn_by(83.0, max_angular_speed=DEFAULT_ANGULAR_SPEED, blocking=False)),
+                ("Forward 320", lambda: robot.move_forward(305.0, DEFAULT_LINEAR_SPEED, 20.0, blocking=False)),
+                ("Turn R 90", lambda: robot.turn_by(-83.0, max_angular_speed=DEFAULT_ANGULAR_SPEED, blocking=False)),
+                ("Check Lidar Before Drive In", None),
+                ("Forward 99", lambda: robot.move_forward(99.0, DEFAULT_LINEAR_SPEED, 20.0, blocking=False)),
             ]
             
             for name, move_fn in moves2:
+                if move_fn is None:
+                    print_lidar_stats(robot, name)
+                    continue
                 print(f"[ACTION]   -> {name}...")
                 handle = move_fn()
                 if not handle.wait(timeout=15.0) or not check_safety(f"MOVE2_{name}"):
@@ -430,16 +460,21 @@ def run(robot: Robot) -> None:
 
             # --- PHASE 3: FINAL DELIVERY ---
             # 10. Movement Sequence 3 (Final Delivery)
-            print("[ACTION] Maneuvering 3: Back 100 -> Right 90 -> Forward 310 -> Left 90 -> Forward 99")
+            print("[ACTION] Maneuvering 3: Back 100 -> Right 90 -> Forward 320 -> Left 90 -> Forward 99")
             moves3 = [
-                ("Back", lambda: robot.move_backward(100.0, 100.0, 20.0, blocking=False)),
-                ("Turn R 90", lambda: robot.turn_by(-90.0, blocking=False)),
-                ("Forward 310", lambda: robot.move_forward(310.0, 100.0, 20.0, blocking=False)),
-                ("Turn L 90", lambda: robot.turn_by(90.0, blocking=False)),
-                ("Forward 99", lambda: robot.move_forward(99.0, 100.0, 20.0, blocking=False)),
+                ("Back", lambda: robot.move_backward(100.0, DEFAULT_LINEAR_SPEED, 20.0, blocking=False)),
+                ("Check Lidar After Back", None),
+                ("Turn R 90", lambda: robot.turn_by(-83.0, max_angular_speed=DEFAULT_ANGULAR_SPEED, blocking=False)),
+                ("Forward 320", lambda: robot.move_forward(305.0, DEFAULT_LINEAR_SPEED, 20.0, blocking=False)),
+                ("Turn L 90", lambda: robot.turn_by(83.0, max_angular_speed=DEFAULT_ANGULAR_SPEED, blocking=False)),
+                ("Check Lidar Before Drive In", None),
+                ("Forward 99", lambda: robot.move_forward(99.0, DEFAULT_LINEAR_SPEED, 20.0, blocking=False)),
             ]
             
             for name, move_fn in moves3:
+                if move_fn is None:
+                    print_lidar_stats(robot, name)
+                    continue
                 print(f"[ACTION]   -> {name}...")
                 handle = move_fn()
                 if not handle.wait(timeout=15.0) or not check_safety(f"MOVE3_{name}"):
@@ -510,7 +545,7 @@ def run(robot: Robot) -> None:
             linear_velocity_cmd, angular_velocity_cmd = planner1.compute_velocity(
                 pose = (current_x, current_y, current_theta_rad),
                 waypoints = remaining_path,
-                max_linear = 80.0, 
+                max_linear = DEFAULT_LINEAR_SPEED, 
             )
             robot.set_velocity(linear_velocity_cmd, math.degrees(angular_velocity_cmd)) 
             
@@ -545,7 +580,6 @@ def run(robot: Robot) -> None:
 
         # ── EXECUTION LOOP: OBSTACLE AVOIDANCE ────────────────────────────
         elif state == "EXEC_OBSTACLE_AVOIDANCE":
-            show_moving_leds(robot)
             robot._draw_lidar_obstacles()
             
             next_state = robot._nav_follow_pp_path_loop()
@@ -645,3 +679,17 @@ def run(robot: Robot) -> None:
             time.sleep(sleep_s)
         else:
             next_tick = time.monotonic()
+
+if __name__ == "__main__":
+    from robot.robot_node import RobotNode
+    import rclpy
+    rclpy.init()
+    node = RobotNode()
+    robot = Robot(node)
+    try:
+        run(robot)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        robot.stop()
+        rclpy.shutdown()
