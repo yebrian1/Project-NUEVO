@@ -1,0 +1,242 @@
+from __future__ import annotations
+import time
+import math
+import numpy as np
+
+from robot.hardware_map import (
+    Button,
+    DEFAULT_FSM_HZ,
+    LED,
+    Motor,
+)
+from robot.robot import FirmwareState, Robot, Unit
+from robot.util import densify_polyline
+
+# ---------------------------------------------------------------------------
+# Robot Build & Drive Configuration
+# ---------------------------------------------------------------------------
+POSITION_UNIT = Unit.MM
+WHEEL_DIAMETER = 74.0
+WHEEL_BASE = 333.0
+INITIAL_THETA_DEG = 90.0
+
+LEFT_WHEEL_MOTOR = Motor.DC_M1
+LEFT_WHEEL_DIR_INVERTED = False
+RIGHT_WHEEL_MOTOR = Motor.DC_M2
+RIGHT_WHEEL_DIR_INVERTED = True
+
+# ---------------------------------------------------------------------------
+# Obstacle Avoidance Configuration (mirrored from main script)
+# ---------------------------------------------------------------------------
+OA_X_L = 1340.0
+OA_START_Y = 1500.0
+OA_END_Y = 3750.0
+OA_OFFSET = 250.0
+
+OA_WAYPOINTS = [
+    (OA_X_L, OA_START_Y),
+    (OA_X_L, OA_END_Y),
+]
+
+# Planner parameters — keep identical to main script
+PLANNER_PARAMS = dict(
+    lookahead_distance=200.0,
+    max_linear_speed=120.0,
+    max_angular_speed=2.0,
+    goal_tolerance=50.0,
+    obstacles_range=400.0, # Monitor maximum 400mm
+    view_angle=math.radians(25.0), # 50 degree cone FOV (+/- 25 deg)
+    safe_dist=300.0,
+    avoidance_delay=80,
+    alpha_Ld=0.4,
+    offset=OA_OFFSET,
+    lane_width=500.0,
+    obstacle_avoidance=True,
+    x_L=OA_X_L,
+)
+
+PRINT_INTERVAL_S = 0.5
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def configure_robot(robot: Robot) -> None:
+    robot.set_unit(POSITION_UNIT)
+    robot.disable_gps()
+    robot.enable_lidar()
+    robot.set_lidar_filter(range_min_mm=15.0, range_max_mm=800.0)
+    robot.set_odometry_parameters(
+        wheel_diameter=WHEEL_DIAMETER,
+        wheel_base=WHEEL_BASE,
+        initial_theta_deg=INITIAL_THETA_DEG,
+        left_motor_id=LEFT_WHEEL_MOTOR,
+        left_motor_dir_inverted=LEFT_WHEEL_DIR_INVERTED,
+        right_motor_id=RIGHT_WHEEL_MOTOR,
+        right_motor_dir_inverted=RIGHT_WHEEL_DIR_INVERTED,
+    )
+
+def start_robot(robot: Robot) -> None:
+    current = robot.get_state()
+    if current in (FirmwareState.ESTOP, FirmwareState.ERROR):
+        robot.reset_estop()
+    robot.set_state(FirmwareState.RUNNING)
+    robot.enable_motor(LEFT_WHEEL_MOTOR)
+    robot.enable_motor(RIGHT_WHEEL_MOTOR)
+    robot.reset_odometry()
+    robot.wait_for_pose_update(timeout=0.2)
+
+def analyse_obstacles(obstacles_raw: np.ndarray, pose: tuple, planner) -> dict:
+    """
+    Detection logic for TESTING ONLY.
+    Ignores absolute world map (OA_X_L) and instead checks relative to the
+    robot's current heading line.
+    """
+    result = dict(
+        raw_count=0, raw_min=None, raw_max=None,
+        fov_count=0, range_count=0,
+        lane_count=0, lane_min=None,
+        obstacle_detected=False,
+    )
+
+    if obstacles_raw.size == 0:
+        return result
+
+    x, y, theta = pose
+    dists_raw = np.linalg.norm(obstacles_raw, axis=1)
+    result.update(
+        raw_count=len(dists_raw),
+        raw_min=float(dists_raw.min()),
+        raw_max=float(dists_raw.max()),
+    )
+
+    # Stage 1 — Frame Check (Raw +X is Front)
+    obs = obstacles_raw
+
+    # Stage 2 — FOV filter (50 degree cone)
+    angles = np.arctan2(obs[:, 1], obs[:, 0])
+    fov_mask = np.abs(angles) <= planner.view_angle
+    in_fov = obs[fov_mask]
+    result["fov_count"] = len(in_fov)
+
+    if in_fov.size == 0:
+        return result
+
+    # Stage 3 — range filter (400mm)
+    dists_fov = np.linalg.norm(in_fov, axis=1)
+    range_mask = dists_fov < planner.obstacles_range
+    in_range = in_fov[range_mask]
+    result["range_count"] = len(in_range)
+
+    if in_range.size == 0:
+        return result
+
+    # Stage 4 — Relative Lane Filter (1500mm wide corridor centered on robot)
+    # This checks points to the left/right of the robot's forward path
+    # In the robot frame (+X forward), this is simply the Y coordinate
+    relative_lane_width = 1500.0
+    lane_mask = np.abs(in_range[:, 1]) < (relative_lane_width / 2.0)
+    in_lane = in_range[lane_mask]
+    
+    result["lane_count"] = len(in_lane)
+    if in_lane.size > 0:
+        result["lane_min"] = float(np.min(np.linalg.norm(in_lane, axis=1)))
+        result["obstacle_detected"] = True
+
+    return result
+
+
+def print_report(pose: tuple, r: dict) -> None:
+    x, y, theta = pose
+    sep = "-" * 60
+
+    print(sep)
+    print(f"  POSE       x={x:7.1f}mm  y={y:7.1f}mm  θ={math.degrees(theta):6.1f}°")
+    
+    # Raw LiDAR
+    if r["raw_count"]:
+        print(f"  LIDAR      total={r['raw_count']:<4d} min={r['raw_min']:6.1f}mm")
+    else:
+        print("  LIDAR      (no points)")
+
+    # Filter stages
+    print(f"  PIPELINE   → fov={r['fov_count']}  → range={r['range_count']}  → rel_lane={r['lane_count']}")
+
+    # Detection Result
+    if r["obstacle_detected"]:
+        print(f"  ✅ OBSTACLE FOUND! (Distance: {r['lane_min']:.1f}mm)")
+        print(f"     [Status: Point is within 400mm, 50deg FOV, and robot's path]")
+    else:
+        print(f"  ❌ NO OBSTACLE DETECTED")
+
+    print(sep)
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+def run(robot: Robot) -> None:
+    configure_robot(robot)
+    state = "INIT"
+    period = 1.0 / float(DEFAULT_FSM_HZ)
+    next_tick = time.monotonic()
+    last_print_at = 0.0
+
+    while True:
+        now = time.monotonic()
+
+        if state == "INIT":
+            start_robot(robot)
+
+            # Initialise planner with identical params to main script,
+            # but point at a trivial 2-point path so it never moves
+            dummy_path = densify_polyline(OA_WAYPOINTS, spacing=200.0)
+            robot._nav_follow_pp_path(**PLANNER_PARAMS)
+            robot.planner.set_path(dummy_path)
+
+            robot.set_led(LED.GREEN, 200)
+            print("=" * 60)
+            print("  LIDAR OBSTACLE DETECTION TEST  (no motion)")
+            print("  Place objects in front of the robot and watch output.")
+            print("  Press BTN_2 to exit.")
+            print("=" * 60)
+            state = "TEST"
+
+        elif state == "TEST":
+            if robot.was_button_pressed(Button.BTN_2):
+                print("\n[TEST] Exiting.")
+                break
+
+            if now - last_print_at >= PRINT_INTERVAL_S:
+                last_print_at = now
+
+                with robot._lock:
+                    obstacles_raw = robot._obstacles_mm.copy()
+                    pose = robot._pose  # (x_mm, y_mm, theta_rad)
+
+                r = analyse_obstacles(obstacles_raw, pose, robot.planner)
+                print_report(pose, r)
+
+        # Tick — no velocity commands issued, robot stays still
+        next_tick += period
+        sleep_s = next_tick - time.monotonic()
+        if sleep_s > 0:
+            time.sleep(sleep_s)
+        else:
+            next_tick = time.monotonic()
+
+
+if __name__ == "__main__":
+    import rclpy
+    from robot.robot_node import RobotNode
+
+    rclpy.init()
+    node = RobotNode()
+    robot = Robot(node)
+
+    try:
+        run(robot)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        robot.stop()
+        rclpy.shutdown()

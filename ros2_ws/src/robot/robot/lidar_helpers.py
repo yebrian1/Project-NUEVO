@@ -3,31 +3,30 @@ import numpy as np
 import matplotlib.pyplot as plt
 from robot.robot import Robot
 
-def get_front_distance(points: np.ndarray, fov_deg: float = 5.0) -> tuple[float | None, int]:
+def get_distance_at_angle(points: np.ndarray, angle_deg: float, fov_deg: float = 10.0) -> tuple[float | None, int]:
     """
-    Calculates the average distance to objects in a narrow front cone.
-    
-    Returns:
-        (avg_distance_mm, point_count)
+    Generic distance check at any angle (0=Front, 90=Left, -90=Right, 180=Back).
+    Rotates the points so the target angle is 'Front' and reuses front logic.
     """
     if points.size == 0:
         return None, 0
 
-    x = points[:, 0]
-    y = points[:, 1]
-
-    # Filter for points in front of the robot (x > 0)
-    front_mask = x > 0
-    xf = x[front_mask]
-    yf = y[front_mask]
+    # Rotate points so the target angle is at 0 (Front)
+    rad = math.radians(-angle_deg)
+    c, s = math.cos(rad), math.sin(rad)
+    rot_x = points[:, 0] * c - points[:, 1] * s
+    rot_y = points[:, 0] * s + points[:, 1] * c
+    
+    # Filter for points in "front" of the rotated frame
+    mask = rot_x > 0
+    xf = rot_x[mask]
+    yf = rot_y[mask]
 
     if xf.size == 0:
         return None, 0
 
-    # Calculate angles of all points in radians
-    angles = np.arctan2(yf, xf)
-    
     # Filter by FOV
+    angles = np.arctan2(yf, xf)
     half_fov_rad = math.radians(fov_deg / 2.0)
     fov_mask = np.abs(angles) <= half_fov_rad
     
@@ -39,61 +38,107 @@ def get_front_distance(points: np.ndarray, fov_deg: float = 5.0) -> tuple[float 
     return float(np.mean(final_points)), final_points.size
 
 
-def get_wall_alignment(points: np.ndarray, fov_deg: float = 15.0, ref_dist: float | None = None) -> dict | None:
+def get_alignment_at_angle(points: np.ndarray, angle_deg: float, fov_deg: float = 30.0, ref_dist: float | None = None) -> dict | None:
     """
-    Fits a line to points in a front cone to determine the tilt of a flat wall.
-    Filters out points beyond 30% of the reference distance (or median) to remove outliers.
-    
-    Returns:
-        { 'tilt_deg': float, 'points': int, 'error': float, 'r2': float } or None
+    Fits a line to points at a specific angle to determine tilt relative to the robot's axis.
+    Uses a larger 30deg FOV by default for better stability.
     """
     if points.size == 0:
         return None
 
-    x = points[:, 0]
-    y = points[:, 1]
+    # Rotate points so the target angle is at 0 (Front)
+    rad = math.radians(-angle_deg)
+    c, s = math.cos(rad), math.sin(rad)
+    rot_x = points[:, 0] * c - points[:, 1] * s
+    rot_y = points[:, 0] * s + points[:, 1] * c
 
-    # 1. Initial filter for points in front (x > 0) and within FOV
-    angles = np.arctan2(y, x)
+    # Filter for points in "front" of the rotated frame and within FOV
+    angles = np.arctan2(rot_y, rot_x)
     half_fov_rad = math.radians(fov_deg / 2.0)
-    mask = (x > 0) & (np.abs(angles) <= half_fov_rad)
+    mask = (rot_x > 0) & (np.abs(angles) <= half_fov_rad)
     
-    xf = x[mask]
-    yf = y[mask]
+    xf = rot_x[mask]
+    yf = rot_y[mask]
 
     if xf.size < 5:
         return None
 
-    # 2. Outlier Removal: Filter for points within +/- 30% of the reference distance
+    # Outlier Removal: Filter for points within +/- 15% of the reference distance
+    # We tightened this from 30% to 15% to ignore objects behind the wall more effectively.
     target_dist = ref_dist if ref_dist is not None else np.median(xf)
-    dist_mask = (xf >= target_dist * 0.7) & (xf <= target_dist * 1.3)
+    dist_mask = (xf >= target_dist * 0.85) & (xf <= target_dist * 1.15)
     xf = xf[dist_mask]
     yf = yf[dist_mask]
 
-    if xf.size < 5:
+    if xf.size < 8: # Require slightly more points for a 30deg fit
         return None
 
-    # 3. Linear Regression: x = m*y + c
-    m, c = np.polyfit(yf, xf, 1)
+    # Linear Regression: x = m*y + c
+    try:
+        m, c = np.polyfit(yf, xf, 1)
+    except:
+        return None
 
-    # Calculate R^2 (Coefficient of Determination)
     predicted_x = m * yf + c
     ss_res = np.sum((xf - predicted_x)**2)
     ss_tot = np.sum((xf - np.mean(xf))**2)
-    # If the wall is perfectly flat (slope 0), ss_tot might be near zero (just noise)
     r2 = 1 - (ss_res / ss_tot) if ss_tot > 0.0001 else 0.0
 
     # m = dx/dy. The angle is atan(m).
-    # Positive m means x increases as y increases (left side is further)
-    # We want negative tilt for LEFT (left is further) and positive for RIGHT (right is further)
     tilt_deg = -math.degrees(math.atan(m))
 
     return {
         'tilt_deg': float(tilt_deg),
         'points': int(xf.size),
-        'error': float(np.sqrt(ss_res / xf.size)),
+        'error': float(np.sqrt(ss_res / xf.size)), # RMSE in mm
         'r2': float(r2)
     }
+
+def get_front_distance(points: np.ndarray, fov_deg: float = 10.0) -> tuple[float | None, int]:
+    return get_distance_at_angle(points, 0.0, fov_deg)
+
+def get_left_distance(points: np.ndarray, fov_deg: float = 10.0) -> tuple[float | None, int]:
+    return get_distance_at_angle(points, 90.0, fov_deg)
+
+def get_right_distance(points: np.ndarray, fov_deg: float = 10.0) -> tuple[float | None, int]:
+    return get_distance_at_angle(points, -90.0, fov_deg)
+
+def get_wall_alignment(points: np.ndarray, fov_deg: float = 30.0, ref_dist: float | None = None) -> dict | None:
+    return get_alignment_at_angle(points, 0.0, fov_deg, ref_dist)
+
+def get_left_alignment(points: np.ndarray, fov_deg: float = 30.0, ref_dist: float | None = None) -> dict | None:
+    return get_alignment_at_angle(points, 90.0, fov_deg, ref_dist)
+
+def get_right_alignment(points: np.ndarray, fov_deg: float = 30.0, ref_dist: float | None = None) -> dict | None:
+    return get_alignment_at_angle(points, -90.0, fov_deg, ref_dist)
+
+def print_all_sides_stats(robot: Robot, step_name: str) -> None:
+    """Helper to print distance and alignment for Front, Left, and Right sides with diagnostics."""
+    points = np.asarray(robot.get_obstacles())
+    if points.size == 0:
+        print(f"[{step_name}] No LiDAR points available.")
+        return
+
+    # Get distances (using 10deg cone for more samples than 5deg)
+    f_dist, f_count = get_front_distance(points)
+    l_dist, l_count = get_left_distance(points)
+    r_dist, r_count = get_right_distance(points)
+    
+    # Get alignments (using 30deg cone for stability)
+    f_res = get_wall_alignment(points, ref_dist=f_dist)
+    l_res = get_left_alignment(points, ref_dist=l_dist)
+    r_res = get_right_alignment(points, ref_dist=r_dist)
+
+    def format_align(res):
+        if not res: return "None"
+        # Print Tilt, RMSE (error), and R2 (fit quality)
+        return f"{res['tilt_deg']:+5.1f}° [RMSE:{res['error']:4.1f}mm, R2:{res['r2']:.2f}]"
+
+    print(f"\n--- LiDAR Report: {step_name} ---")
+    print(f"FRONT: {f_dist if f_dist else 0.0:6.1f} mm ({f_count:3} pts) | {format_align(f_res)}")
+    print(f"LEFT : {l_dist if l_dist else 0.0:6.1f} mm ({l_count:3} pts) | {format_align(l_res)}")
+    print(f"RIGHT: {r_dist if r_dist else 0.0:6.1f} mm ({r_count:3} pts) | {format_align(r_res)}")
+    print("------------------------------------------")
 
 def save_lidar_plot(robot: Robot, filename: str = "lidar_temp.png") -> None:
     """Saves a plot of the current LiDAR scan to a PNG file, rotated 90deg CCW (Front is Up)."""
@@ -104,19 +149,14 @@ def save_lidar_plot(robot: Robot, filename: str = "lidar_temp.png") -> None:
     
     points = np.asarray(points_list)
     # Rotate 90deg CCW for intuitive viewing:
-    # Robot +X (Forward) becomes Plot +Y (Up)
-    # Robot +Y (Left) becomes Plot -X (Left)
     plot_x = -points[:, 1]
     plot_y = points[:, 0]
 
     plt.figure(figsize=(8, 8))
     plt.scatter(plot_x, plot_y, s=2, c='red')
-    
-    # Draw axes for reference (center of robot)
     plt.axhline(0, color='black', lw=1, alpha=0.5)
     plt.axvline(0, color='black', lw=1, alpha=0.5)
     
-    # Draw a small indicator for the robot body
     robot_body = plt.Circle((0, 0), 100, color='blue', fill=False, label='Robot Center')
     plt.gca().add_patch(robot_body)
 
@@ -126,7 +166,6 @@ def save_lidar_plot(robot: Robot, filename: str = "lidar_temp.png") -> None:
     plt.axis('equal')
     plt.grid(True, linestyle='--', alpha=0.7)
     
-    # Save to the writable runtime_output directory
     import os
     save_path = os.path.join("/runtime_output", filename)
     try:
@@ -136,23 +175,3 @@ def save_lidar_plot(robot: Robot, filename: str = "lidar_temp.png") -> None:
         print(f"[LIDAR] Failed to save plot: {e}")
     finally:
         plt.close()
-
-def print_lidar_stats(robot: Robot, step_name: str) -> None:
-    """Helper to quickly print distance and alignment."""
-    points = np.asarray(robot.get_obstacles())
-    if points.size == 0:
-        print(f"[{step_name}] No LiDAR points available.")
-        return
-
-    ref_dist, count = get_front_distance(points, 5.0)
-    if ref_dist is not None:
-        print(f"[{step_name}] Distance: {ref_dist:.1f} mm ({count} pts)")
-    else:
-        print(f"[{step_name}] Distance: None")
-        
-    res = get_wall_alignment(points, 15.0, ref_dist)
-    if res:
-        direction = "RIGHT" if res['tilt_deg'] > 0 else "LEFT"
-        print(f"[{step_name}] Alignment: {res['tilt_deg']:+.2f} deg ({direction}) | RMSE: {res['error']:.1f} mm | R2: {res['r2']:.2f}")
-    else:
-        print(f"[{step_name}] Alignment: Not enough points for tilt.")

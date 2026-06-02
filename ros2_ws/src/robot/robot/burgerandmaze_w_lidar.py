@@ -15,7 +15,44 @@ from robot.hardware_map import (
 from robot.robot import FirmwareState, Robot, Unit
 from robot.path_planner2 import PurePursuitPlanner, generate_maze_waypoints
 from robot.util import densify_polyline
-from robot.lidar_helpers import get_front_distance, get_wall_alignment, save_lidar_plot, print_lidar_stats
+from robot.lidar_helpers import (
+    get_front_distance,
+    get_left_distance,
+    get_right_distance,
+    get_wall_alignment,
+    get_left_alignment,
+    get_right_alignment,
+    save_lidar_plot,
+)
+
+def print_all_sides_stats(robot: Robot, step_name: str) -> None:
+    """Helper to print distance and alignment for Front, Left, and Right sides."""
+    points = np.asarray(robot.get_obstacles())
+    if points.size == 0:
+        print(f"[{step_name}] No LiDAR points available.")
+        return
+
+    # Get distances
+    f_dist, f_count = get_front_distance(points)
+    l_dist, l_count = get_left_distance(points)
+    r_dist, r_count = get_right_distance(points)
+    
+    # Get alignments
+    f_res = get_wall_alignment(points, ref_dist=f_dist)
+    l_res = get_left_alignment(points, ref_dist=l_dist)
+    r_res = get_right_alignment(points, ref_dist=r_dist)
+
+    def format_align(res):
+        if not res: return "None"
+        direction = "R" if res['tilt_deg'] > 0 else "L"
+        return f"{res['tilt_deg']:+.1f} ({direction})"
+
+    print(f"--- LiDAR Stats: {step_name} ---")
+    print(f"FRONT: {f_dist if f_dist else 0.0:6.1f} mm ({f_count:3} pts) | Align: {format_align(f_res)}")
+    print(f"LEFT : {l_dist if l_dist else 0.0:6.1f} mm ({l_count:3} pts) | Align: {format_align(l_res)}")
+    print(f"RIGHT: {r_dist if r_dist else 0.0:6.1f} mm ({r_count:3} pts) | Align: {format_align(r_res)}")
+    print("---------------------------------")
+    time.sleep(1.0) # Pause so user can read
 
 # ---------------------------------------------------------------------------
 # Robot Build & Drive Configuration
