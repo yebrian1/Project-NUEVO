@@ -122,7 +122,7 @@
 // ============================================================================
 
 // Outer diameter of each drive wheel (mm)
-#define WHEEL_DIAMETER_MM   74.0f
+#define WHEEL_DIAMETER_MM   80.0f
 
 // Centre-to-centre track width between the two drive wheels (mm)
 #define WHEEL_BASE_MM       333.0f

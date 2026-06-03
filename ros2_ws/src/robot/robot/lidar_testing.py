@@ -23,6 +23,7 @@ from robot.lidar_helpers import (
     get_wall_alignment,
     get_left_alignment,
     get_right_alignment,
+    getWallAlignment,
     save_lidar_plot,
 )
 
@@ -155,25 +156,49 @@ def run(robot: Robot) -> None:
             print(f"[DEBUG DIST] Front: {f_dist if f_dist else 0.0:.1f} ({f_count}) | Left: {l_dist if l_dist else 0.0:.1f} ({l_count}) | Right: {r_dist if r_dist else 0.0:.1f} ({r_count})")
 
         if robot.was_button_pressed(Button.BTN_2):
+            # Collect alignment results for all 3 sides using explicit helpers
             points = np.asarray(robot.get_obstacles())
-            # Front
-            f_dist, _ = get_front_distance(points)
-            f_res = get_wall_alignment(points, ref_dist=f_dist)
-            # Left
-            l_dist, _ = get_left_distance(points)
-            l_res = get_left_alignment(points, ref_dist=l_dist)
-            # Right
-            r_dist, _ = get_right_distance(points)
-            r_res = get_right_alignment(points, ref_dist=r_dist)
+            align_results = []
+            for name, angle, helper, dist_helper in [
+                ("FRONT", 0.0, get_wall_alignment, get_front_distance),
+                ("LEFT ", 90.0, get_left_alignment, get_left_distance),
+                ("RIGHT", -90.0, get_right_alignment, get_right_distance)
+            ]:
+                ref_dist, _ = dist_helper(points)
+                res = helper(points, ref_dist=ref_dist)
+                if res:
+                    # Map tilt_deg to standardized heading for compatibility with plot
+                    target_nom = 90.0 if angle in [90.0, -90.0] else 0.0
+                    res['heading'] = target_nom + res['tilt_deg']
+                    res['robot_angle'] = angle
+                    align_results.append(res)
+                    print(f"[DEBUG ALIGN] {name}: Heading={res['heading']:+.1f}° | R2={res['r2']:.2f}")
+                else:
+                    print(f"[DEBUG ALIGN] {name}: None")
             
-            f_str = f"{f_res['tilt_deg']:+.1f}" if f_res else "None"
-            l_str = f"{l_res['tilt_deg']:+.1f}" if l_res else "None"
-            r_str = f"{r_res['tilt_deg']:+.1f}" if r_res else "None"
-            
-            print(f"[DEBUG ALIGN] Front: {f_str} | Left: {l_str} | Right: {r_str}")
+            # Save the specialized debug plot
+            save_lidar_plot(robot, filename="lidar_alignment_debug.png", align_results=align_results)
 
         if robot.was_button_pressed(Button.BTN_3):
             save_lidar_plot(robot)
+
+        if robot.was_button_pressed(Button.BTN_4):
+            print("\n--- Wall Heading Scan (Explicit Helpers) ---")
+            points = np.asarray(robot.get_obstacles())
+            for name, angle, helper, dist_helper in [
+                ("FRONT", 0.0, get_wall_alignment, get_front_distance),
+                ("LEFT ", 90.0, get_left_alignment, get_left_distance),
+                ("RIGHT", -90.0, get_right_alignment, get_right_distance)
+            ]:
+                ref_dist, _ = dist_helper(points)
+                res = helper(points, ref_dist=ref_dist)
+                if res:
+                    target_nom = 90.0 if angle in [90.0, -90.0] else 0.0
+                    heading = target_nom + res['tilt_deg']
+                    print(f"{name}: Heading={heading:5.1f}° | Dist={ref_dist if ref_dist else 0.0:6.1f}mm | R2={res['r2']:.2f} ({res['points']} pts)")
+                else:
+                    print(f"{name}: No wall detected.")
+            print("--------------------------------------------")
 
         if state not in ["INIT", "IDLE"] and robot.get_button(Button.BTN_2):
             robot.stop() 

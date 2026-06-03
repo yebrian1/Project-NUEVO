@@ -8,14 +8,23 @@ from robot.hardware_map import (
     DEFAULT_FSM_HZ,
     LED,
     Motor,
+    Stepper,
+    ServoChannel,
+    StepMoveType,
 )
 from robot.robot import FirmwareState, Robot, Unit
-from robot.lidar_helpers import getWallAlignment
+from robot.path_planner2 import PurePursuitPlanner, generate_maze_waypoints
+from robot.util import densify_polyline
+
+from robot.lidar_helpers import (
+    getWallAlignment,
+    save_lidar_plot,
+)
 
 # ---------------------------------------------------------------------------
 # Robot Build & Drive Configuration
 # ---------------------------------------------------------------------------
-TAG_ID = 21 
+TAG_ID = 21 # Updated to user's GPS ArUco tag
 POSITION_UNIT = Unit.MM
 WHEEL_DIAMETER = 74.0
 WHEEL_BASE = 333.0
@@ -59,6 +68,7 @@ def start_robot(robot: Robot) -> None:
     robot.reset_odometry()
     robot.wait_for_pose_update(timeout=0.2)
 
+# --- LED Helpers ---
 def show_idle_leds(robot: Robot) -> None:
     robot.set_led(LED.ORANGE, 200)
     robot.set_led(LED.GREEN, 0)
@@ -79,16 +89,14 @@ def run(robot: Robot) -> None:
     next_tick = time.monotonic()
 
     # Alignment state variables
-    align_max_speed = 5.0 # deg/s
-    align_tolerance = 2.0 # deg
-    align_r2_threshold = 0.3 
-    align_fail_count = 0
-    align_fail_limit = 15 
-    last_known_heading = 999.0
-    
-    # Active alignment configuration
-    align_poll_angle = 90.0 # LIDAR sector (90=Front, 180=Left, 0=Right)
-    align_target_heading = 0.0 # Target heading for the wall fit
+    align_max_speed = 5 # deg/s
+    align_min_speed = 1 # deg/s (to overcome friction)
+    align_kp = 0.5 # P-gain: speed = error * kp
+    align_tolerance = 2.0 # dega
+    last_w_cmd = 0.0
+    last_sent_w = -999.0 # Forces initial update
+    last_cmd_time = 0.0
+    cmd_min_interval = 0.05 # Max 20Hz motor commands to keep UART healthy
 
     while True:
         loop_start = time.monotonic()
@@ -109,88 +117,58 @@ def run(robot: Robot) -> None:
         elif state == "IDLE":
             show_idle_leds(robot)
             
-            # --- ALIGNMENT TRIGGERS ---
+            # --- ALIGNMENT TRIGGER ---
             if robot.was_button_pressed(Button.BTN_1):
-                print("[ACTION] Starting smooth FRONT wall alignment. Goal: 0.0°")
-                align_poll_angle = 90.0
-                align_target_heading = 0.0
-                state = "START_ALIGN"
+                print("[ACTION] Starting smooth P-control FRONT wall alignment. Goal: 0.0°")
+                show_running_leds(robot)
+                last_w_cmd = 0.0
+                last_sent_w = -999.0
+                state = "ALIGN_P_SMOOTH"
 
-            elif robot.was_button_pressed(Button.BTN_2):
-                print("[ACTION] Starting smooth LEFT wall alignment. Goal: 90.0°")
-                align_poll_angle = 180.0
-                align_target_heading = 90.0
-                state = "START_ALIGN"
-
-            elif robot.was_button_pressed(Button.BTN_3):
-                print("[ACTION] Starting smooth RIGHT wall alignment. Goal: 90.0°")
-                align_poll_angle = 0.0
-                align_target_heading = 90.0
-                state = "START_ALIGN"
-                
-        elif state == "START_ALIGN":
-            show_running_leds(robot)
-            align_fail_count = 0
-            last_known_heading = 999.0
-            state = "ALIGN_P_SMOOTH"
+            elif robot.was_button_pressed(Button.BTN_9):
+                state = "CMD_MAZE_START"
 
         elif state == "ALIGN_P_SMOOTH":
-            # 1. Fetch latest LIDAR result for the configured side
-            res = getWallAlignment(robot, align_poll_angle)
+            # 1. Fetch latest LIDAR result
+            res = getWallAlignment(robot, 90.0) # Check front
             
-            if res and res['r2'] > align_r2_threshold:
-                align_fail_count = 0
+            if res and res['r2'] > 0.4:
                 heading = res['heading']
-                last_known_heading = heading
                 
-                # 2. Calculate error relative to target
-                # For Front, error is heading (0.0). For Left/Right, error is heading - 90.0.
-                error = heading - align_target_heading
-                
-                # 3. Check for completion
-                if abs(error) <= align_tolerance:
+                # 2. Check for completion
+                if abs(heading) <= align_tolerance:
                     if robot.is_moving():
                         robot.cancel_motion()
                     robot.stop()
-                    print(f"Success Align! Final Heading: {heading:+.2f}° (Err: {error:+.1f}°)")
+                    print(f"[ALIGN] Complete! Final Heading: {heading:+.2f}°")
                     show_idle_leds(robot)
                     state = "IDLE"
                     continue
                 
-                # 4. Non-Blocking Turn (Smooth Control)
-                # The user instruction: "turn left if >90 turn right if <90" 
-                # This is a direct proportional mapping: if error is +, turn + (Left).
+                # 3. Non-Blocking Turn
+                # If we are not already moving, start a turn toward the detected wall angle.
+                # This uses the built-in P-controller in the NavigationMixin background thread.
                 if not robot.is_moving():
-                    robot.turn_by(error, blocking=False, 
+                    robot.turn_by(heading, blocking=False, 
                                   max_angular_speed=align_max_speed,
                                   tolerance_deg=align_tolerance)
                 
                 if np.random.rand() < 0.1: # 10% logging
-                    print(f"  [ALIGN] Head:{heading:+.1f}° | Err:{error:+.1f}° | R2:{res['r2']:.2f} | Moving:{robot.is_moving()}")
+                    print(f"  [ALIGN] Head:{heading:+.1f}° | R2:{res['r2']:.2f} | Moving:{robot.is_moving()}")
             else:
-                # 5. Handle lost wall / finishing
-                if not robot.is_moving():
-                    align_fail_count += 1
-                    if align_fail_count >= align_fail_limit:
-                        robot.stop()
-                        
-                        # Differentiate based on last known state
-                        error_last = last_known_heading - align_target_heading
-                        if abs(error_last) < (align_tolerance + 3.0):
-                            print(f"Complete: Alignment reached target (Last error: {error_last:+.1f}°).")
-                        else:
-                            print(f"Abort: Wall lost or fit too noisy (Last error: {error_last:+.1f}°).")
-                            
-                        show_idle_leds(robot)
-                        state = "IDLE"
-                        continue
-                        
-                    if np.random.rand() < 0.05:
-                        print("[WARN] Searching for wall...")
+                # If LIDAR frame is bad/missing, we just wait.
+                # If we were turning, the background thread continues until it hits its target.
+                if not robot.is_moving() and np.random.rand() < 0.05:
+                    print("[WARN] Searching for front wall...")
+
+        elif state == "CMD_MAZE_START":
+            state = "IDLE"
 
         # Loop Timing Control
         loop_time = time.monotonic() - loop_start
         if loop_time > period:
+            # We are lagging - don't sleep, just move to next tick
+            # print(f"[LAG] Loop took {loop_time*1000:.1f}ms (target {period*1000:.1f}ms)")
             next_tick = time.monotonic()
         else:
             next_tick += period
