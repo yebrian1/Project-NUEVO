@@ -39,12 +39,14 @@ def get_distance_at_angle(points: np.ndarray, angle_deg: float, fov_deg: float =
     if final_points.size == 0:
         return None, 0
 
-    return float(np.mean(final_points)), final_points.size
+    # Use median for better outlier rejection (e.g. seeing through gaps)
+    return float(np.median(final_points)), final_points.size
 
 
 def get_alignment_at_angle(points: np.ndarray, angle_deg: float, fov_deg: float = 40.0, ref_dist: float | None = None) -> dict | None:
     """
     Fits a line to points at a specific angle to determine tilt relative to the robot's axis.
+    Returns tilt_deg: positive means the wall is tilted CCW (receding on the left).
     """
     if points.size == 0:
         return None
@@ -67,9 +69,9 @@ def get_alignment_at_angle(points: np.ndarray, angle_deg: float, fov_deg: float 
         return None
 
     # Outlier Removal: Filter for points within a distance window.
-    # We tightened this from 50% to 15% to ignore objects behind the wall more effectively.
+    # We tightened this from 50% to 15% (0.85 to 1.15) to ignore objects behind the wall.
     target_dist = ref_dist if ref_dist is not None else np.median(xf)
-    dist_mask = (xf >= target_dist * 0.85) & (xf <= target_dist * 1.5)
+    dist_mask = (xf >= target_dist * 0.85) & (xf <= target_dist * 1.15)
     xf = xf[dist_mask]
     yf = yf[dist_mask]
 
@@ -94,7 +96,8 @@ def get_alignment_at_angle(points: np.ndarray, angle_deg: float, fov_deg: float 
         r2 = 1 - (ss_res / ss_tot) if ss_tot > 0.0001 else 0.0
 
     # m = dx/dy. The angle is atan(m).
-    tilt_deg = -math.degrees(math.atan(m))
+    # If m > 0, wall recedes on left (+y), so we must turn left (+) to align.
+    tilt_deg = math.degrees(math.atan(m))
 
     return {
         'tilt_deg': float(tilt_deg),
@@ -170,12 +173,14 @@ def robot_align_to_wall(robot: Robot, poll_angle: float, target_heading: float, 
     Returns True if success, False if aborted or wall lost.
     """
     start_time = time.monotonic()
-    align_max_speed = 5.0 # deg/s
-    align_tolerance = 2.0 # deg
-    align_r2_threshold = 0.3 
+    align_max_speed = 10.0 # deg/s (increased for better response)
+    align_tolerance = 0.5 # Tightened for "perfect" straightness
+    align_r2_threshold = 0.8 # Very strict for high confidence
     align_fail_count = 0
-    align_fail_limit = 15 
+    align_fail_limit = 20 # Be patient with the sensor
     last_known_heading = 999.0
+    
+    Kp_align = 1.5 # P-gain for continuous alignment
     
     print(f"[ALIGN] Target: {target_heading}° | Sector: {poll_angle}°")
 
@@ -193,7 +198,7 @@ def robot_align_to_wall(robot: Robot, poll_angle: float, target_heading: float, 
             align_fail_count = 0
             heading = res['heading']
             last_known_heading = heading
-            error = heading - target_heading
+            error = target_heading - heading
             
             # 2. Check for completion
             if abs(error) <= align_tolerance:
@@ -201,32 +206,43 @@ def robot_align_to_wall(robot: Robot, poll_angle: float, target_heading: float, 
                 print(f"[ALIGN] Success! Heading: {heading:+.2f}° (Err: {error:+.1f}°)")
                 return True
             
-            # 3. Apply Smooth P-Control
-            if not robot.is_moving():
-                robot.turn_by(error, blocking=False, 
-                              max_angular_speed=align_max_speed,
-                              tolerance_deg=align_tolerance)
+            # 3. Continuous P-Control (Smoother than turn_by)
+            angular_vel = error * Kp_align
+            angular_vel = max(-align_max_speed, min(align_max_speed, angular_vel))
             
-            if np.random.rand() < 0.05:
+            robot.set_velocity(0.0, angular_vel)
+            
+            if np.random.rand() < 0.10:
                 print(f"  [ALIGN] Head:{heading:+.1f}° | Err:{error:+.1f}° | R2:{res['r2']:.2f}")
         else:
             # 4. Handle lost wall / finishing
-            if not robot.is_moving():
-                align_fail_count += 1
-                if align_fail_count >= align_fail_limit:
-                    robot.stop()
-                    error_last = last_known_heading - target_heading
-                    if abs(error_last) < (align_tolerance + 3.0):
-                        print(f"[ALIGN] Complete (Last error: {error_last:+.1f}°).")
-                        return True
-                    else:
-                        print(f"[ALIGN] Abort: Wall lost or fit too noisy.")
-                        return False
+            robot.stop() # Stop if we lose the wall to avoid drifting
+            align_fail_count += 1
+            
+            if align_fail_count % 5 == 0:
+                points = robot.get_obstacles()
+                n_pts = len(points) if points else 0
+                if n_pts == 0:
+                    print(f"  [ALIGN] No LIDAR points received from sensor.")
+                elif not res:
+                    print(f"  [ALIGN] No wall found in {poll_angle}° sector.")
+                else:
+                    print(f"  [ALIGN] Wall fit too noisy: R2={res['r2']:.2f} (need >{align_r2_threshold})")
+
+            if align_fail_count >= align_fail_limit:
+                error_last = target_heading - (last_known_heading if last_known_heading != 999.0 else 0.0)
+                # Tightened: Only return True if we are actually within the real tolerance
+                if last_known_heading != 999.0 and abs(error_last) <= align_tolerance:
+                    print(f"[ALIGN] Complete (Last error: {error_last:+.1f}°).")
+                    return True
+                else:
+                    print(f"[ALIGN] Abort: Wall lost or fit too noisy.")
+                    return False
                 
                 if np.random.rand() < 0.05:
                     print("[ALIGN] Searching for wall...")
         
-        time.sleep(0.02) # ~50Hz loop
+        time.sleep(0.05) # 20Hz loop for smooth control
 
     robot.stop()
     print("[ALIGN] Abort: Timeout reached.")
@@ -240,6 +256,65 @@ def robot_align_left(robot: Robot) -> bool:
 
 def robot_align_right(robot: Robot) -> bool:
     return robot_align_to_wall(robot, 0.0, 90.0)
+
+def robot_approach_wall(robot: Robot, target_dist_mm: float = 25.0, tolerance_mm: float = 2.0, timeout_s: float = 15.0) -> bool:
+    """
+    Blocking helper that performs smooth P-control to approach a wall.
+    Returns True if success, False if aborted or wall lost.
+    """
+    start_time = time.monotonic()
+    Kp_dist = 1.2
+    max_linear = 60.0
+    
+    print(f"[APPROACH] Target: {target_dist_mm}mm")
+    lost_wall_count = 0
+    lost_wall_limit = 20  # ~1 second of no detection
+
+    while (time.monotonic() - start_time) < timeout_s:
+        # Global Cancel Check
+        if robot.was_button_pressed(Button.BTN_10):
+            robot.stop()
+            print("[APPROACH] Aborted via BTN_10.")
+            return False
+
+        points = np.asarray(robot.get_obstacles())
+        current_dist, count = get_front_distance(points, fov_deg=10.0)
+
+        if current_dist is not None and count > 0:
+            lost_wall_count = 0
+            error_mm = current_dist - target_dist_mm
+            
+            if abs(error_mm) <= tolerance_mm:
+                robot.stop()
+                print(f"[APPROACH] Success! Distance: {current_dist:.1f}mm")
+                return True
+            
+            # P-Control for distance
+            linear_cmd = Kp_dist * error_mm
+            linear_cmd = max(-max_linear, min(max_linear, linear_cmd))
+            
+            robot.set_velocity(linear_cmd, 0.0)
+            
+            if np.random.rand() < 0.05:
+                print(f"  [APPROACH] Dist:{current_dist:.1f}mm | Err:{error_mm:.1f}mm")
+        else:
+            robot.stop()
+            lost_wall_count += 1
+            if lost_wall_count >= lost_wall_limit:
+                print("[APPROACH] Abort: Wall not detected.")
+                return False
+            
+            if np.random.rand() < 0.05:
+                print("[APPROACH] Searching for wall...")
+        
+        time.sleep(0.05)
+
+    robot.stop()
+    print("[APPROACH] Abort: Timeout reached.")
+    return False
+
+def robot_approach_front(robot: Robot, target_dist_mm: float = 25.0) -> bool:
+    return robot_approach_wall(robot, target_dist_mm=target_dist_mm)
 
 def print_all_sides_stats(robot: Robot, step_name: str) -> None:
     """Helper to print distance and alignment for Front, Left, and Right sides with diagnostics."""

@@ -1,0 +1,10 @@
+docker compose -f ros2_ws/docker/docker-compose.rpi.yml up -d
+
+/everything_but_robot.launch.py
+
+ 1 docker compose -f ros2_ws/docker/docker-compose.rpi.yml exec ros2_runtime bash -lc \
+   2   "source install/setup.bash && ros2 launch robot everything_but_robot.launch.py"
+
+   docker compose -f ros2_ws/docker/docker-compose.rpi.yml exec ros2_runtime bash
+   source install/setup.bash
+   ros2 launch vision vision_production.launch.py camera_device:=/dev/video0

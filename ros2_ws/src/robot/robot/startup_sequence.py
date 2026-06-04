@@ -383,7 +383,7 @@ def run(robot: Robot) -> None:
                     # Save diagnostic plot on success
                     save_lidar_plot(robot, filename="lidar_alignment_success.png")
                     
-                    state = "IDLE"
+                    state = "APPROACH_WALL"
                 else:
                     print("[WARN] Could not determine distance for approach. Returning to IDLE.")
                     state = "IDLE"
@@ -401,7 +401,7 @@ def run(robot: Robot) -> None:
         elif state == "APPROACH_WALL":
             # target_dist is captured from the ALIGN_WALL successful transition
             if robot_approach_front(robot, target_dist_mm=target_dist):
-                print(f"[FSM] SUCCESS! Relative approachmo complete. Systems down.")
+                print(f"[FSM] SUCCESS! Relative approach complete. Systems down.")
                 show_idle_leds(robot)
                 state = "IDLE"
             else:

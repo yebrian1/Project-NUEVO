@@ -1,9 +1,10 @@
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
 COMMON_PARAMETERS = {
-    "camera_device": "/dev/video10",
     "camera_width": 640,
     "camera_height": 480,
     "camera_fps": 15.0,
@@ -19,6 +20,11 @@ COMMON_PARAMETERS = {
 def generate_launch_description() -> LaunchDescription:
     return LaunchDescription(
         [
+            DeclareLaunchArgument(
+                "camera_device",
+                default_value="/dev/video10",
+                description="The V4L2 device path for the camera.",
+            ),
             Node(
                 package="vision",
                 executable="vision_node",
@@ -28,6 +34,7 @@ def generate_launch_description() -> LaunchDescription:
                 parameters=[
                     COMMON_PARAMETERS,
                     {
+                        "camera_device": LaunchConfiguration("camera_device"),
                         "debug_save_enabled": True,
                         "debug_output_dir": "/runtime_output/vision",
                         "debug_save_rate_hz": 1.0,

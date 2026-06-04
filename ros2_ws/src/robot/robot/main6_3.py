@@ -17,12 +17,15 @@ from robot.robot import FirmwareState, Robot, Unit
 from robot.path_planner2 import PurePursuitPlanner, generate_maze_waypoints
 from robot.util import densify_polyline
 
-# Import LiDAR helpers instead of defining them locally
+# Import LiDAR helpers
 from robot.lidar_helpers import (
     get_front_distance,
+    get_left_distance,
+    get_right_distance,
+    get_wall_alignment,
+    get_left_alignment,
+    get_right_alignment,
     robot_align_front,
-    robot_align_right,
-    robot_align_left,
     robot_approach_front,
     save_lidar_plot,
 )
@@ -64,11 +67,15 @@ TOLERANCE_MM       = 80.0
 ADVANCE_RADIUS_MM  = 250.0  
 MAX_ANGULAR_RAD_S  = 1.0    
 
+# Burger sequence speeds
+DEFAULT_LINEAR_SPEED  = 60.0  # mm/s
+DEFAULT_ANGULAR_SPEED = 0.2   # rad/s (~11 deg/s)
+
 STATUS_PRINT_INTERVAL_S = 0.5
 
 # Start at 0,0 and go straight forward 1000mm
 PATH_CONTROL_POINTS = [
-    (180, 900),           
+    (200, 1000),           
 ]
 
 # ---------------------------------------------------------------------------
@@ -175,6 +182,34 @@ def print_status(robot: Robot) -> None:
     else:
         print(f"  odom=({ox:6.0f}, {oy:6.0f}) mm  θ={otheta:5.1f}°")
 
+def print_lidar_stats(robot: Robot, step_name: str) -> None:
+    """Helper to print distance and alignment for Front, Left, and Right sides."""
+    points = np.asarray(robot.get_obstacles())
+    if points.size == 0:
+        print(f"[{step_name}] No LiDAR points available.")
+        return
+
+    # Get distances
+    f_dist, f_count = get_front_distance(points)
+    l_dist, l_count = get_left_distance(points)
+    r_dist, r_count = get_right_distance(points)
+    
+    # Get alignments
+    f_res = get_wall_alignment(points, ref_dist=f_dist)
+    l_res = get_left_alignment(points, ref_dist=l_dist)
+    r_res = get_right_alignment(points, ref_dist=r_dist)
+
+    def format_align(res):
+        if not res: return "None"
+        direction = "R" if res['tilt_deg'] > 0 else "L"
+        return f"{res['tilt_deg']:+.1f} ({direction})"
+
+    print(f"--- LiDAR Stats: {step_name} ---")
+    print(f"FRONT: {f_dist if f_dist else 0.0:6.1f} mm ({f_count:3} pts) | Align: {format_align(f_res)}")
+    print(f"LEFT : {l_dist if l_dist else 0.0:6.1f} mm ({l_count:3} pts) | Align: {format_align(l_res)}")
+    print(f"RIGHT: {r_dist if r_dist else 0.0:6.1f} mm ({r_count:3} pts) | Align: {format_align(r_res)}")
+    print("---------------------------------")
+
 # ---------------------------------------------------------------------------
 # Main FSM Loop
 # ---------------------------------------------------------------------------
@@ -194,6 +229,13 @@ def run(robot: Robot) -> None:
     lights_off_at = 0.0 
     alignment_attempts = 0
     target_dist = 25.0
+
+    # Diagnostic helper
+    def check_safety(step_name: str) -> bool:
+        cur_st = robot.get_state()
+        if cur_st in (FirmwareState.ERROR, FirmwareState.ESTOP):
+            return False
+        return True
 
     while True:
         now = time.monotonic()
@@ -215,7 +257,7 @@ def run(robot: Robot) -> None:
             start_robot(robot)
             show_idle_leds(robot)
             robot.step_set_config(ARM_STEPPER, max_velocity=ARM_MAX_VELOCITY, acceleration=ARM_ACCELERATION)
-            print("[FSM] IDLE — press BTN_9 to start Execution Sequence")
+            print("[FSM] IDLE — BTN_9: Maze, BTN_10: Burger Sequence, BTN_1: LIDAR Stats, BTN_3: Save LIDAR Plot")
             state = "IDLE"
 
         elif state == "IDLE":
@@ -223,6 +265,12 @@ def run(robot: Robot) -> None:
             if robot.was_button_pressed(Button.BTN_9):
                 drive_handle = None 
                 state = "INITIAL_TURN"
+            elif robot.was_button_pressed(Button.BTN_10):
+                state = "CMD_SEQUENCE_MOVE"
+            elif robot.was_button_pressed(Button.BTN_1):
+                print_lidar_stats(robot, "MANUAL_CHECK")
+            elif robot.was_button_pressed(Button.BTN_3):
+                save_lidar_plot(robot)
 
         elif state == "INITIAL_TURN":
             if drive_handle is None:
@@ -383,7 +431,7 @@ def run(robot: Robot) -> None:
                     # Save diagnostic plot on success
                     save_lidar_plot(robot, filename="lidar_alignment_success.png")
                     
-                    state = "IDLE"
+                    state = "APPROACH_WALL"
                 else:
                     print("[WARN] Could not determine distance for approach. Returning to IDLE.")
                     state = "IDLE"
@@ -401,14 +449,198 @@ def run(robot: Robot) -> None:
         elif state == "APPROACH_WALL":
             # target_dist is captured from the ALIGN_WALL successful transition
             if robot_approach_front(robot, target_dist_mm=target_dist):
-                print(f"[FSM] SUCCESS! Relative approachmo complete. Systems down.")
-                show_idle_leds(robot)
-                state = "IDLE"
+                print(f"[FSM] SUCCESS! Relative approach complete. Transitioning to Burger Sequence.")
+                state = "CMD_SEQUENCE_MOVE"
             else:
                 print("[WARN] Wall approach failed or aborted. Returning to IDLE.")
                 robot.stop()
                 show_idle_leds(robot)
                 state = "IDLE"
+
+        # ── DISCRETE COMMAND: BURGER PICKUP SEQUENCE ──────────────────────
+        elif state == "CMD_SEQUENCE_MOVE":
+            show_running_leds(robot)
+            
+            if not check_safety("START"):
+                state = "IDLE"
+                continue
+
+            print("[ACTION] Executing Burger Pickup Sequence")
+            
+            # --- PHASE 1: PICK AND MOVE ---
+            # 1. Close gripper
+            print("[ACTION] Closing gripper...")
+            robot.enable_servo(GRIPPER_CHANNEL)
+            robot.set_servo(GRIPPER_CHANNEL, GRIPPER_CLOSE_DEG)
+            time.sleep(0.5)
+            
+            # 2. Lift arm
+            print("[ACTION] Lifting arm...")
+            robot.step_enable(ARM_STEPPER)
+            if not robot.step_move(ARM_STEPPER, steps=arm_up_steps, blocking=True, timeout=10.0) or not check_safety("LIFT 1"):
+                state = "IDLE"
+                continue
+            
+            # 3. Movement Sequence 1
+            print("[ACTION] Maneuvering 1: Back 100 -> Align Left -> Right 90 -> Forward 160 -> Left 90 -> Align Front -> Forward 99")
+            
+            # Step 1: Back
+            robot.move_backward(100.0, DEFAULT_LINEAR_SPEED, 20.0, blocking=False).wait(timeout=10.0)
+            from robot.lidar_helpers import robot_align_left
+            robot_align_left(robot)
+            
+            # Step 2: Turn Right
+            robot.turn_by(-83.0, max_angular_speed=DEFAULT_ANGULAR_SPEED, blocking=False).wait(timeout=10.0)
+            
+            # Step 3: Forward
+            robot.move_forward(152.5, DEFAULT_LINEAR_SPEED, 20.0, blocking=False).wait(timeout=10.0)
+            
+            # Step 4: Turn Left (Facing wall)
+            robot.turn_by(83.0, max_angular_speed=DEFAULT_ANGULAR_SPEED, blocking=False).wait(timeout=10.0)
+            robot_align_front(robot)
+            
+            # Step 5: Drive in (Approach using LiDAR)
+            points = np.asarray(robot.get_obstacles())
+            curr_dist, _ = get_front_distance(points)
+            if curr_dist is not None:
+                target_approach = max(10.0, curr_dist - 99.0)
+                print(f"[ACTION] Approaching burger: current={curr_dist:.1f}mm, target={target_approach:.1f}mm")
+                if not robot_approach_front(robot, target_dist_mm=target_approach):
+                    state = "IDLE"
+                    continue
+            else:
+                print("[WARN] Wall lost, using open-loop move.")
+                robot.move_forward(99.0, DEFAULT_LINEAR_SPEED, 20.0, blocking=False).wait(timeout=10.0)
+            
+            if not check_safety("MOVE 1 COMPLETE"):
+                state = "IDLE"
+                continue
+            
+            # 4. Lower arm
+            print("[ACTION] Lowering arm...")
+            robot.step_enable(ARM_STEPPER)
+            if not robot.step_move(ARM_STEPPER, steps=arm_down_steps, blocking=True, timeout=10.0) or not check_safety("LOWER 1"):
+                state = "IDLE"
+                continue
+            
+            # 5. Open gripper
+            print("[ACTION] Opening gripper...")
+            robot.enable_servo(GRIPPER_CHANNEL)
+            robot.set_servo(GRIPPER_CHANNEL, GRIPPER_OPEN_DEG)
+            time.sleep(0.5)
+
+            # --- PHASE 2: RETURN AND SECOND PICK ---
+            # 6. Raise arm
+            print("[ACTION] Raising arm...")
+            robot.step_enable(ARM_STEPPER)
+            if not robot.step_move(ARM_STEPPER, steps=-1600, blocking=True, timeout=10.0) or not check_safety("RAISE 1"):
+                state = "IDLE"
+                continue
+
+            # 7. Movement Sequence 2 (Return)
+            print("[ACTION] Maneuvering 2 (Return): Back 100 -> Align Left -> Left 90 -> Forward 320 -> Right 90 -> Align Front -> Forward 99")
+            
+            # Step 1: Back
+            robot.move_backward(100.0, DEFAULT_LINEAR_SPEED, 20.0, blocking=False).wait(timeout=10.0)
+            robot_align_left(robot)
+            
+            # Step 2: Turn Left
+            robot.turn_by(83.0, max_angular_speed=DEFAULT_ANGULAR_SPEED, blocking=False).wait(timeout=10.0)
+            
+            # Step 3: Forward
+            robot.move_forward(305.0, DEFAULT_LINEAR_SPEED, 20.0, blocking=False).wait(timeout=10.0)
+            
+            # Step 4: Turn Right (Facing wall)
+            robot.turn_by(-83.0, max_angular_speed=DEFAULT_ANGULAR_SPEED, blocking=False).wait(timeout=10.0)
+            robot_align_front(robot)
+            
+            # Step 5: Drive in (Approach using LiDAR)
+            points = np.asarray(robot.get_obstacles())
+            curr_dist, _ = get_front_distance(points)
+            if curr_dist is not None:
+                target_approach = max(10.0, curr_dist - 99.0)
+                print(f"[ACTION] Approaching second burger: current={curr_dist:.1f}mm, target={target_approach:.1f}mm")
+                if not robot_approach_front(robot, target_dist_mm=target_approach):
+                    state = "IDLE"
+                    continue
+            else:
+                print("[WARN] Wall lost, using open-loop move.")
+                robot.move_forward(99.0, DEFAULT_LINEAR_SPEED, 20.0, blocking=False).wait(timeout=10.0)
+            
+            if not check_safety("MOVE 2 COMPLETE"):
+                state = "IDLE"
+                continue
+
+            # 8. Lower arm
+            print("[ACTION] Lowering arm...")
+            robot.step_enable(ARM_STEPPER)
+            if not robot.step_move(ARM_STEPPER, steps=2000, blocking=True, timeout=10.0) or not check_safety("LOWER 2"):
+                state = "IDLE"
+                continue
+
+            # 9. Close gripper (Second Pick)
+            print("[ACTION] Closing gripper (Second Pick)...")
+            robot.enable_servo(GRIPPER_CHANNEL)
+            robot.set_servo(GRIPPER_CHANNEL, 65)
+            time.sleep(0.5)
+
+            print("[ACTION] Lifting arm...")
+            robot.step_enable(ARM_STEPPER)
+            if not robot.step_move(ARM_STEPPER, steps=arm_up_steps, blocking=True, timeout=10.0) or not check_safety("LIFT 2"):
+                state = "IDLE"
+                continue
+
+            # --- PHASE 3: FINAL DELIVERY ---
+            # 10. Movement Sequence 3 (Final Delivery)
+            print("[ACTION] Maneuvering 3: Back 100 -> Align Left -> Right 90 -> Forward 320 -> Left 90 -> Align Front -> Forward 99")
+            
+            # Step 1: Back
+            robot.move_backward(100.0, DEFAULT_LINEAR_SPEED, 20.0, blocking=False).wait(timeout=10.0)
+            robot_align_left(robot)
+            
+            # Step 2: Turn Right
+            robot.turn_by(-83.0, max_angular_speed=DEFAULT_ANGULAR_SPEED, blocking=False).wait(timeout=10.0)
+            
+            # Step 3: Forward
+            robot.move_forward(305.0, DEFAULT_LINEAR_SPEED, 20.0, blocking=False).wait(timeout=10.0)
+            
+            # Step 4: Turn Left (Facing wall)
+            robot.turn_by(83.0, max_angular_speed=DEFAULT_ANGULAR_SPEED, blocking=False).wait(timeout=10.0)
+            robot_align_front(robot)
+            
+            # Step 5: Drive in (Approach using LiDAR)
+            points = np.asarray(robot.get_obstacles())
+            curr_dist, _ = get_front_distance(points)
+            if curr_dist is not None:
+                target_approach = max(10.0, curr_dist - 99.0)
+                print(f"[ACTION] Approaching delivery point: current={curr_dist:.1f}mm, target={target_approach:.1f}mm")
+                if not robot_approach_front(robot, target_dist_mm=target_approach):
+                    state = "IDLE"
+                    continue
+            else:
+                print("[WARN] Wall lost, using open-loop move.")
+                robot.move_forward(99.0, DEFAULT_LINEAR_SPEED, 20.0, blocking=False).wait(timeout=10.0)
+            
+            if not check_safety("MOVE 3 COMPLETE"):
+                state = "IDLE"
+                continue
+
+            # 11. Lower arm
+            print("[ACTION] Lowering arm...")
+            robot.step_enable(ARM_STEPPER)
+            if not robot.step_move(ARM_STEPPER, steps=1000, blocking=True, timeout=10.0) or not check_safety("LOWER 3"):
+                state = "IDLE"
+                continue
+
+            # 12. Open gripper
+            print("[ACTION] Opening gripper...")
+            robot.enable_servo(GRIPPER_CHANNEL)
+            robot.set_servo(GRIPPER_CHANNEL, GRIPPER_OPEN_DEG)
+            time.sleep(0.5)
+
+            print("[ACTION] Stacking complete. Returning to IDLE.")
+            robot.stop()
+            state = "IDLE"
 
         # Sleep to maintain loop frequency
         next_tick += period

@@ -340,8 +340,8 @@ extern Print &DEBUG_SERIAL;
   #define VBAT_CUTOFF_V         8.0f   // 8 × 1.00 V — disable motors (prevents over-discharge)
   #define VBAT_OVERVOLTAGE_V   12.5f   // above max charge (~8 × 1.45 V)
 #elif BATTERY_TYPE == BATTERY_NIMH_10CELL
-  #define VBAT_WARN_V          10.5f   // 10 × 1.05 V
-  #define VBAT_CUTOFF_V        9.0f   // 10 × 1.00 V
+  #define VBAT_WARN_V           9.5f   // Reduced to prevent early warnings during load
+  #define VBAT_CUTOFF_V         8.0f   // Reduced to 8.0V to handle high motor draw dips
   #define VBAT_OVERVOLTAGE_V   15.5f   // above max charge (~10 × 1.45 V)
 #elif BATTERY_TYPE == BATTERY_LIPO_2S
   #define VBAT_WARN_V           7.0f   // 2 × 3.5 V
