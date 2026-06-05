@@ -2,9 +2,21 @@ docker compose -f ros2_ws/docker/docker-compose.rpi.yml up -d
 
 /everything_but_robot.launch.py
 
- 1 docker compose -f ros2_ws/docker/docker-compose.rpi.yml exec ros2_runtime bash -lc \
-   2   "source install/setup.bash && ros2 launch robot everything_but_robot.launch.py"
+docker compose -f ros2_ws/docker/docker-compose.rpi.yml exec ros2_runtime bash 
+source install/setup.bash 
+ros2 launch robot everything_but_robot.launch.py
 
-   docker compose -f ros2_ws/docker/docker-compose.rpi.yml exec ros2_runtime bash
-   source install/setup.bash
-   ros2 launch vision vision_production.launch.py camera_device:=/dev/video0
+docker compose -f ros2_ws/docker/docker-compose.rpi.yml exec ros2_runtime bash
+source install/setup.bash
+ros2 launch vision vision_production.launch.py camera_device:=/dev/video0
+pkill -f vision_node
+
+docker compose -f ros2_ws/docker/docker-compose.rpi.yml exec ros2_runtime bash
+source /opt/ros/jazzy/setup.bash
+source /ros2_ws/install/setup.bash
+
+docker compose -f ros2_ws/docker/docker-compose.rpi.yml down
+docker compose -f ros2_ws/docker/docker-compose.rpi.yml restart
+
+#clear uart errors
+ros2 topic pub --once /sys_cmd bridge_interfaces/msg/SysCommand "{command: 3}"

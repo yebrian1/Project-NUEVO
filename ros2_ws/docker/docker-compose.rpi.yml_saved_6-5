@@ -20,9 +20,6 @@ services:
 
     image: ros2-runtime:latest
 
-    cap_add:
-      - SYS_NICE
-
     # Entrypoint builds/sources the workspace, then this launch file becomes
     # the container's main process. If the bridge exits, Docker restarts it.
     command: ["ros2", "launch", "bridge", "bridge.launch.py"]

@@ -9,39 +9,60 @@ from robot.hardware_map import (
     LED,
     Motor,
     Stepper,
+    ServoChannel,
+    StepMoveType,
+    INITIAL_THETA_DEG,
+    LIDAR_FOV_DEG,
+    LIDAR_MOUNT_THETA_DEG,
+    LIDAR_MOUNT_X_MM,
+    LIDAR_MOUNT_Y_MM,
+    LIDAR_RANGE_MAX_MM,
+    LIDAR_RANGE_MIN_MM,
+    LEFT_WHEEL_DIR_INVERTED,
+    LEFT_WHEEL_MOTOR,
+    POSITION_UNIT,
+    RIGHT_WHEEL_DIR_INVERTED,
+    RIGHT_WHEEL_MOTOR,
+    TAG_BODY_OFFSET_X_MM,
+    TAG_BODY_OFFSET_Y_MM,
+    WHEEL_BASE,
+    WHEEL_DIAMETER,
 )
 from robot.robot import FirmwareState, Robot, Unit
+from robot.path_planner2 import PurePursuitPlanner, generate_maze_waypoints
+from robot.util import densify_polyline
+import matplotlib.pyplot as plt
 from robot.lidar_helpers import (
     get_front_distance,
     get_wall_alignment,
     save_lidar_plot,
     robot_align_to_wall,
-    robot_align_left,
 )
 
 # ---------------------------------------------------------------------------
-# Robot Build & Drive Configuration
+# Robot Build & Drive Configuration (from main.py)
 # ---------------------------------------------------------------------------
 TAG_ID = 21 
-POSITION_UNIT = Unit.MM
-WHEEL_DIAMETER = 80.0
-WHEEL_BASE = 333.0
-INITIAL_THETA_DEG = 90.0
-
-LEFT_WHEEL_MOTOR = Motor.DC_M1
-LEFT_WHEEL_DIR_INVERTED = False
-RIGHT_WHEEL_MOTOR = Motor.DC_M2
-RIGHT_WHEEL_DIR_INVERTED = True
+WHEEL_DIAMETER_MAIN = 80.0 # main.py uses 80.0, hardware_map uses 74.0
+# We will use the ones from main.py for the maze part, but they seem to be the same variables.
+# Actually, main.py redefines them.
 
 # ---------------------------------------------------------------------------
-# Actuator Configuration
+# Actuator Configuration (Arm & Gripper)
 # ---------------------------------------------------------------------------
+GRIPPER_CHANNEL   = ServoChannel.CH_1
+GRIPPER_OPEN_DEG  = 150.0   
+GRIPPER_CLOSE_DEG = 50.0  
+
 ARM_STEPPER        = Stepper.STEPPER_1
+arm_up_steps       = -2000
+arm_down_steps     = 1600
 ARM_MAX_VELOCITY   = 400    
 ARM_ACCELERATION   = 200    
+ARM_HOME_VELOCITY  = 300    
 
 # ---------------------------------------------------------------------------
-# Pure Pursuit Configuration
+# Pure Pursuit Configuration (from main.py)
 # ---------------------------------------------------------------------------
 VELOCITY_MM_S      = 150.0
 LOOKAHEAD_MM       = 250.0  
@@ -51,15 +72,30 @@ MAX_ANGULAR_RAD_S  = 1.0
 
 STATUS_PRINT_INTERVAL_S = 0.5
 
-# ---------------------------------------------------------------------------
-# OBSTACLE AVOIDANCE CONFIGURATION (from combinedgpsmaze.py)
-# ---------------------------------------------------------------------------
-OA_GOAL_MM = (610.0, 3050.0)
-OA_VELOCITY_MM_S = 150.0
-OA_TOLERANCE_MM = 50.0
-OA_MAX_ANGULAR_RAD_S = 1.0
+PATH_CONTROL_POINTS = [
+    (0, 1300),
+    (0, 3750),
+]
 
-# LAPF Tuning
+PATH_CONTROL_POINTS_2 = [(1150,3400),
+    (800, 3300),
+    (800, 3150),
+    (800,2000),
+    (850,1500),
+    (850, 1000), 
+    (850, 600), 
+]
+
+RUNBACK = False
+
+# ---------------------------------------------------------------------------
+# Obstacle Avoidance Configuration (from obstacleavoidance7final.py)
+# ---------------------------------------------------------------------------
+LAPF_GOAL_MM = (610.0, 610.0*5)
+LAPF_VELOCITY_MM_S = 150.0
+LAPF_TOLERANCE_MM = 50.0
+LAPF_MAX_ANGULAR_RAD_S = 1.0
+
 LEASH_LENGTH_MM = 350.0 
 REPULSION_RANGE_MM = 300.0
 TARGET_SPEED_MM_S = 200.0
@@ -69,6 +105,17 @@ FORCE_EMA_ALPHA = 0.35
 INFLATION_MARGIN_MM = 150.0
 LEASH_HALF_ANGLE_DEG = 25.0
 
+# ---------------------------------------------------------------------------
+# Vision Configuration
+# ---------------------------------------------------------------------------
+ENABLE_GPS = True
+VISION_STALE_SEC = 3.0
+MIN_TRAFFIC_LIGHT_CONFIDENCE = 0.20
+LED_BRIGHTNESS = 255
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 def resolve_lapf_config() -> dict[str, float]:
     return {
         "leash_length_mm": float(LEASH_LENGTH_MM),
@@ -81,37 +128,27 @@ def resolve_lapf_config() -> dict[str, float]:
         "leash_half_angle_deg": float(LEASH_HALF_ANGLE_DEG),
     }
 
-# Simplified path to avoid tethering issues at corners
-PATH_CONTROL_POINTS = [
-    (0, 1300),
-    (0, 3900),
-]
-
-PATH_CONTROL_POINTS_2 = [
-    (800, 3400),
-    (800, 3300),
-    (800, 3150),
-    (800, 2000),
-    (850, 1500),
-    (850, 1000), 
-    (900, 600), 
-]
-
-RUNBACK = False
-ENABLE_GPS = True
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 def configure_robot(robot: Robot) -> None:
     robot.set_unit(POSITION_UNIT)
     robot.enable_vision() 
     robot.enable_gps()
     robot.enable_lidar()
-    robot.set_lidar_filter(range_min_mm=0.0)
+    
+    # Combined Lidar setup
+    robot.set_lidar_mount(
+        x_mm=LIDAR_MOUNT_X_MM,
+        y_mm=LIDAR_MOUNT_Y_MM,
+        theta_deg=LIDAR_MOUNT_THETA_DEG,
+    )
+    robot.set_lidar_filter(
+        range_min_mm=LIDAR_RANGE_MIN_MM,
+        range_max_mm=LIDAR_RANGE_MAX_MM,
+        fov_deg=LIDAR_FOV_DEG,
+    )
+    robot.start_lidar_world_publisher()
 
     robot.set_odometry_parameters(
-        wheel_diameter=WHEEL_DIAMETER,
+        wheel_diameter=WHEEL_DIAMETER_MAIN,
         wheel_base=WHEEL_BASE,
         initial_theta_deg=INITIAL_THETA_DEG,
         left_motor_id=LEFT_WHEEL_MOTOR,
@@ -120,6 +157,7 @@ def configure_robot(robot: Robot) -> None:
         right_motor_dir_inverted=RIGHT_WHEEL_DIR_INVERTED,
     )
     robot.set_tracked_tag_id(TAG_ID)
+    robot.set_tag_body_offset(TAG_BODY_OFFSET_X_MM, TAG_BODY_OFFSET_Y_MM)
     robot.enable_gps_tangent_heading(alpha=0.01, min_displacement_mm=200.0)
     robot.set_position_fusion_alpha(0.01)
 
@@ -148,6 +186,17 @@ def show_running_leds(robot: Robot) -> None:
 def print_status(robot: Robot) -> None:
     ox, oy, otheta = robot.get_odometry_pose()
     if ENABLE_GPS and robot.has_fused_pose():
+        fx, fy, ftheta = robot.get_fused_pose()
+        print(
+            f"  odom=({ox:6.0f}, {oy:6.0f}) mm  θ_odom={otheta:5.1f}°  |  "
+            f"fused=({fx:6.0f}, {fy:6.0f}) mm  θ_fused={ftheta:5.1f}°  "
+            f"gps={'fresh' if robot.is_gps_active() else 'stale'}"
+        )
+    else:
+        print(f"  odom=({ox:6.0f}, {oy:6.0f}) mm  θ={otheta:5.1f}°")
+
+def print_lapf_status(robot: Robot) -> None:
+    if robot.has_fused_pose():
         x, y, theta = robot.get_fused_pose()
         label = "fused"
     else:
@@ -157,7 +206,7 @@ def print_status(robot: Robot) -> None:
     virtual_target = robot.get_virtual_target()
     obstacle_tracks = robot.get_obstacle_tracks()
     if virtual_target is None:
-        vt_summary = ""
+        vt_summary = " vt=(none)"
     else:
         vt_summary = f" vt=({virtual_target[0]:6.0f}, {virtual_target[1]:6.0f}) mm"
 
@@ -170,15 +219,39 @@ def print_status(robot: Robot) -> None:
             )
             for track in obstacle_tracks
         )
-        track_summary = f" tracked={len(obstacle_tracks)} nearest={nearest_boundary_mm:.0f}mm"
+        track_summary = f" tracked={len(obstacle_tracks)} nearest_track={nearest_boundary_mm:.0f} mm"
     else:
         track_summary = " tracked=0"
 
     print(
         f"  {label}=({x:6.0f}, {y:6.0f}) mm  θ={theta:5.1f}°"
         f"{vt_summary}{track_summary}"
-        f" gps={'fresh' if robot.is_gps_active() else 'stale'}"
     )
+
+def start_lapf_goal(robot: Robot):
+    cfg = resolve_lapf_config()
+    return robot.lapf_to_goal(
+        LAPF_GOAL_MM[0],
+        LAPF_GOAL_MM[1],
+        velocity=LAPF_VELOCITY_MM_S,
+        tolerance=LAPF_TOLERANCE_MM,
+        leash_length_mm=cfg["leash_length_mm"],
+        repulsion_range_mm=cfg["repulsion_range_mm"],
+        target_speed_mm_s=cfg["target_speed_mm_s"],
+        max_angular_rad_s=LAPF_MAX_ANGULAR_RAD_S,
+        repulsion_gain=cfg["repulsion_gain"],
+        attraction_gain=cfg["attraction_gain"],
+        force_ema_alpha=cfg["force_ema_alpha"],
+        inflation_margin_mm=cfg["inflation_margin_mm"],
+        leash_half_angle_deg=cfg["leash_half_angle_deg"],
+        blocking=False,
+    )
+
+def reset_mission_pose(robot: Robot) -> None:
+    robot.reset_odometry()
+    if not robot.wait_for_odometry_reset(timeout=2.0):
+        print("[warn] odometry reset not confirmed within 2.0s; continuing with latest pose")
+        robot.wait_for_pose_update(timeout=0.5)
 
 # ---------------------------------------------------------------------------
 # Main FSM Loop
@@ -192,6 +265,8 @@ def run(robot: Robot) -> None:
     last_status_print_at = 0.0
     period = 1.0 / float(DEFAULT_FSM_HZ)
     next_tick = time.monotonic()
+
+    print("[STARTUP] Initialized. Press BTN_9 to start Maze, then Obstacle Avoidance.")
 
     while True:
         now = time.monotonic()
@@ -226,12 +301,10 @@ def run(robot: Robot) -> None:
             print("[FSM] IDLE — path cancelled/stopped")
             state = "IDLE"
 
-        # --- STATE MACHINE ---
         if state == "INIT":
             start_robot(robot)
             show_idle_leds(robot)
             robot.step_set_config(ARM_STEPPER, max_velocity=ARM_MAX_VELOCITY, acceleration=ARM_ACCELERATION)
-            print("[FSM] IDLE — press BTN_9 to start Maze")
             state = "IDLE"
 
         elif state == "IDLE":
@@ -252,7 +325,6 @@ def run(robot: Robot) -> None:
             gps_wait = time.monotonic()
             gps_locked = False
             last_gps_print = 0.0
-            
             while time.monotonic() - gps_wait < 30.0:
                 if robot.is_gps_active():
                     gps_x, gps_y = robot._gps_x_mm, robot._gps_y_mm
@@ -265,37 +337,27 @@ def run(robot: Robot) -> None:
                     last_gps_print = time.monotonic()
                 time.sleep(0.1)
 
-            if gps_locked:
+            if not gps_locked:
+                print("[WARN] GPS lock failed after 30s. Proceeding with Odometry only.")
+            else:
                 print("[GPS] Synchronizing Odometry to GPS (Alpha Snap)...")
                 robot.set_position_fusion_alpha(1.0)
-                time.sleep(0.5) 
-                robot.set_position_fusion_alpha(0.01) 
-                print("[GPS] Synchronization complete.")
-            else:
-                print("[WARN] GPS lock failed. Proceeding with Odometry only.")
+                time.sleep(0.5)
+                robot.set_position_fusion_alpha(0.01)
+                print("[GPS] Synchronization complete. Pose is now aligned.")
+                time.sleep(0.2)
 
-            if not RUNBACK:
-                drive_handle = robot.purepursuit_follow_path(
-                    waypoints=PATH_CONTROL_POINTS,
-                    velocity=VELOCITY_MM_S,
-                    lookahead=LOOKAHEAD_MM,
-                    tolerance=TOLERANCE_MM,
-                    advance_radius=ADVANCE_RADIUS_MM,
-                    max_angular_rad_s=MAX_ANGULAR_RAD_S,
-                    blocking=False,
-                )
-            else:
-                drive_handle = robot.purepursuit_follow_path(
-                    waypoints=PATH_CONTROL_POINTS_2,
-                    velocity=VELOCITY_MM_S,
-                    lookahead=LOOKAHEAD_MM,
-                    tolerance=TOLERANCE_MM,
-                    advance_radius=ADVANCE_RADIUS_MM,
-                    max_angular_rad_s=MAX_ANGULAR_RAD_S,
-                    blocking=False,
-                )
-
+            drive_handle = robot.purepursuit_follow_path(
+                waypoints=PATH_CONTROL_POINTS,
+                velocity=VELOCITY_MM_S,
+                lookahead=LOOKAHEAD_MM,
+                tolerance=TOLERANCE_MM,
+                advance_radius=ADVANCE_RADIUS_MM,
+                max_angular_rad_s=MAX_ANGULAR_RAD_S,
+                blocking=False,
+            )
             print(f"[FSM] MOVING — Using built-in Pure Pursuit")
+            last_status_print_at = now    
             state = "EXEC_MAZE_DRIVING"
 
         elif state == "EXEC_MAZE_DRIVING":
@@ -307,107 +369,107 @@ def run(robot: Robot) -> None:
                 print("[FSM] DONE — path complete")
                 robot.stop()
                 show_idle_leds(robot)
-                if not RUNBACK:
-                    print("[FSM] Aligning with back wall...")
-                    robot_align_to_wall(robot, 90.0, 0.0)
-                    seq_step = 0
-                    state = "EXEC_TURN_SEQUENCE"
-                else:
-                    seq_step = 0
-                    state = "EXEC_TURN_SEQUENCE_2"
+                print("[FSM] Aligning with wall...")
+                robot_align_to_wall(robot, 90.0, 0.0)
+                seq_step = 0
+                state = "EXEC_TURN_SEQUENCE"
 
         elif state == "EXEC_TURN_SEQUENCE":
             if seq_step == 0:
-                print("[SEQ] Step 1/5: Turning Right to 0°")
-                drive_handle = robot.turn_to(0.0, blocking=False)
+                print("[SEQ] Step 1/3: Turning Right 90°")
+                drive_handle = robot.turn_by(-90.0, blocking=False)
                 seq_step = 1
             elif seq_step == 1:
                 if drive_handle is not None and drive_handle.is_finished():
-                    print("[SEQ] Step 2/5: Driving Straight 525 mm")
-                    drive_handle = robot.move_forward(675.0, velocity=VELOCITY_MM_S, tolerance=10.0, blocking=False)
+                    print("[SEQ] Step 2/3: Driving Straight 670 mm")
+                    drive_handle = robot.move_forward(670.0, velocity=VELOCITY_MM_S, tolerance=20.0, blocking=False)
                     seq_step = 2
             elif seq_step == 2:
                 if drive_handle is not None and drive_handle.is_finished():
-                    print("[SEQ] Step 3/5: Turning Right to -90°")
-                    drive_handle = robot.turn_to(-90.0, blocking=False)
+                    print("[SEQ] Step 3/3: Turning Right 90°")
+                    drive_handle = robot.turn_by(-90.0, blocking=False)
                     seq_step = 3
             elif seq_step == 3:
                 if drive_handle is not None and drive_handle.is_finished():
-                    print("[SEQ] Step 4/5: Driving Forward 125 mm")
-                    drive_handle = robot.move_forward(275.0, velocity=VELOCITY_MM_S, tolerance=10.0, blocking=False)
-                    seq_step = 4
-            elif seq_step == 4:
-                if drive_handle is not None and drive_handle.is_finished():
-                    print("[SEQ] Step 5/5: Aligning and driving forward 2.7m")
-                    robot_align_left(robot)
                     robot.stop()
-                    drive_handle = robot.move_forward(2915.0, velocity=VELOCITY_MM_S, tolerance=10.0, blocking=False)
-                    seq_step = 5
-            elif seq_step == 5:
-                if drive_handle is not None and drive_handle.is_finished():
-                    print("[SEQ] Sequence complete! Transitioning to CMD_MAZE_START (Runback).")
+                    show_idle_leds(robot)
+                    print("[SEQ] Sequence complete! Transitioning to EXEC_RAMP_SEQUENCE.")
                     RUNBACK = True
-                    state = "CMD_MAZE_START"
+                    seq_step = 0
+                    state = "EXEC_RAMP_SEQUENCE"
 
-        elif state == "EXEC_TURN_SEQUENCE_2":
+        elif state == "EXEC_RAMP_SEQUENCE":
             if seq_step == 0:
-                print("[SEQ] Step 1/4: Turning Left to 0°")
-                drive_handle = robot.turn_to(0.0, blocking=False)
+                print("[RAMP] Step 1/4: Moving 150 mm forward to get closer to ramp")
+                drive_handle = robot.move_forward(150.0, velocity=VELOCITY_MM_S, tolerance=10.0, blocking=False)
                 seq_step = 1
             elif seq_step == 1:
                 if drive_handle is not None and drive_handle.is_finished():
-                    print("[SEQ] Step 2/4: Driving Straight 700 mm")
+                    print("[RAMP] Step 2/4: Aligning with ramp (front)...")
+                    robot_align_to_wall(robot, 90.0, 0.0)
+                    seq_step = 2
+            elif seq_step == 2:
+                print("[RAMP] Step 3/4: Driving straight 2715 mm (Manual)")
+                drive_handle = robot.move_forward(2715.0, velocity=VELOCITY_MM_S, tolerance=50.0, blocking=False)
+                seq_step = 3
+            elif seq_step == 3:
+                if drive_handle is not None and drive_handle.is_finished():
+                    print("[RAMP] Step 4/4: Aligning with wall before turn (front)...")
+                    robot_align_to_wall(robot, 90.0, 0.0)
+                    robot.stop()
+                    show_idle_leds(robot)
+                    seq_step = 0
+                    state = "EXEC_TURN_SEQUENCE_2"
+
+        elif state == "EXEC_TURN_SEQUENCE_2":
+            if seq_step == 0:
+                print("[SEQ] Step 1/3: Turning Left 90°")
+                drive_handle = robot.turn_by(90.0, blocking=False)
+                seq_step = 1
+            elif seq_step == 1:
+                if drive_handle is not None and drive_handle.is_finished():
+                    print("[SEQ] Step 2/3: Driving Straight 700mm")
                     drive_handle = robot.move_forward(700.0, velocity=VELOCITY_MM_S, tolerance=20.0, blocking=False)
                     seq_step = 2
             elif seq_step == 2:
                 if drive_handle is not None and drive_handle.is_finished():
-                    print("[SEQ] Step 3/4: Turning Left to 90°")
-                    drive_handle = robot.turn_to(90.0, blocking=False)
+                    print("[SEQ] Step 3/3: Turning Left 90°")
+                    drive_handle = robot.turn_by(90.0, blocking=False)
                     seq_step = 3
             elif seq_step == 3:
                 if drive_handle is not None and drive_handle.is_finished():
-                    print("[SEQ] Step 4/4: Driving Straight 200 mm")
+                    print("[SEQ] Step 2/3: Driving Straight 200mm")
                     drive_handle = robot.move_forward(200.0, velocity=VELOCITY_MM_S, tolerance=20.0, blocking=False)
                     seq_step = 4
             elif seq_step == 4:
                 if drive_handle is not None and drive_handle.is_finished():
                     robot.stop()
                     show_idle_leds(robot)
-                    print("[SEQ] Sequence complete! Transitioning to OBSTACLE_AVOIDANCE.")
-                    state = "CMD_OBSTACLE_AVOIDANCE_START"
+                    print("[SEQ] Maze Sequence complete! Transitioning to OBSTACLE_AVOIDANCE_START.")
+                    RUNBACK = True
+                    state = "OBSTACLE_AVOIDANCE_START"
 
-        elif state == "CMD_OBSTACLE_AVOIDANCE_START":
+        elif state == "OBSTACLE_AVOIDANCE_START":
+            # Transition logic from obstacleavoidance7final.py
+            reset_mission_pose(robot)
             show_running_leds(robot)
-            print("[FSM] STARTING OBSTACLE AVOIDANCE (LAPF)")
-            cfg = resolve_lapf_config()
-            drive_handle = robot.lapf_to_goal(
-                OA_GOAL_MM[0],
-                OA_GOAL_MM[1],
-                velocity=OA_VELOCITY_MM_S,
-                tolerance=OA_TOLERANCE_MM,
-                leash_length_mm=cfg["leash_length_mm"],
-                repulsion_range_mm=cfg["repulsion_range_mm"],
-                target_speed_mm_s=cfg["target_speed_mm_s"],
-                max_angular_rad_s=OA_MAX_ANGULAR_RAD_S,
-                repulsion_gain=cfg["repulsion_gain"],
-                attraction_gain=cfg["attraction_gain"],
-                force_ema_alpha=cfg["force_ema_alpha"],
-                inflation_margin_mm=cfg["inflation_margin_mm"],
-                leash_half_angle_deg=cfg["leash_half_angle_deg"],
-                blocking=False,
-            )
+            drive_handle = start_lapf_goal(robot)
             last_status_print_at = now
-            state = "EXEC_OBSTACLE_AVOIDANCE"
+            print("[FSM] OBSTACLE AVOIDANCE — LAPF goal started")
+            state = "OBSTACLE_AVOIDANCE_MOVING"
 
-        elif state == "EXEC_OBSTACLE_AVOIDANCE":
+        elif state == "OBSTACLE_AVOIDANCE_MOVING":
             if now - last_status_print_at >= STATUS_PRINT_INTERVAL_S:
-                print_status(robot)
+                print_lapf_status(robot)
                 last_status_print_at = now
             
             if drive_handle is not None and drive_handle.is_finished():
-                print("[FSM] DONE — Obstacle avoidance complete")
+                print("[FSM] OBSTACLE AVOIDANCE — goal complete")
+                print_lapf_status(robot)
+                drive_handle = None
                 robot.stop()
                 show_idle_leds(robot)
+                print("[FSM] ALL SEQUENCES COMPLETE. Returning to IDLE.")
                 state = "IDLE"
 
         next_tick += period

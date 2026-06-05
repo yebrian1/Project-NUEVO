@@ -9,5 +9,6 @@ def generate_launch_description():
             executable="robot_gps",
             name="robot_gps",
             output="screen",
+            prefix=["nice -n 0 taskset -c 1"],
         ),
     ])

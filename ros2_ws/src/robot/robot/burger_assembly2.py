@@ -41,11 +41,10 @@ RIGHT_WHEEL_DIR_INVERTED = True
 # ---------------------------------------------------------------------------
 ARM_STEPPER        = Stepper.STEPPER_1
 ARM_UP_STEPS       = -700
-ARM_MAX_VELOCITY   = 400    # Reverted to fast version
-ARM_ACCELERATION   = 200    # Reverted to fast version
+ARM_MAX_VELOCITY   = 400    
+ARM_ACCELERATION   = 200    
 
 GRIPPER_CHANNEL    = ServoChannel.CH_1
-# Using UI-aligned degrees: User is tweaking these manually, leaving as-is.
 GRIPPER_OPEN_DEG   = 120.0
 GRIPPER_CLOSE_DEG  = 80.0
 GRIPPER_CLOSE_DEG_MEAT = 64
@@ -58,21 +57,23 @@ CAMERA_DEFAULT_DEG = 60.0
 # Vision & Drive Constants
 # ---------------------------------------------------------------------------
 VELOCITY_MM_S = 150.0
-TOLERANCE_MM = 10.0
-TURN_VELOCITY_DEG_S = 10.0
-TURN_TOLERANCE_DEG = 5
+TOLERANCE_MM = 50.0
 TABLE_THRESHOLD_MM = 400.0
 CONSISTENT_READINGS_REQ = 3
 
 # P-Control Wall Following
 FOLLOW_TARGET_MM = 390.0
 FOLLOW_RIGHT_TARGET_MM = 370.0
-FOLLOW_DISTANCE_MM = 545.0
-FOLLOW_KP = 0.3  # Angular speed (deg/s) per mm of distance error
+FOLLOW_DISTANCE_MM = 550.0
+FOLLOW_KP = 0.3  
 
 FIRST_RIGHT_FORWARD = 140.0
 FIRST_LEFT_FORWARD = 195.0
 SECOND_RIGHT_FORWARD = 165.0
+
+# Pure Pursuit tuning for straights
+LOOKAHEAD_MM = 100.0
+MAX_ANGULAR_RAD_S = 1.0
 
 VISION_STALE_SEC = 3.0
 MIN_TRAFFIC_LIGHT_CONFIDENCE = 0.20
@@ -82,25 +83,20 @@ LIGHT_HOLD_SEC = 2.0
 def find_traffic_light_color(robot: Robot) -> str | None:
     if not robot.is_vision_active(timeout_s=VISION_STALE_SEC):
         return None
-
     best_color = None
     best_confidence = -1.0
-
     for detection in robot.get_detections("traffic light"):
         confidence = float(detection["confidence"])
         if confidence < MIN_TRAFFIC_LIGHT_CONFIDENCE:
             continue
-
         attributes = detection.get("attributes", {})
         color_attribute = attributes.get("color", {})
         color = color_attribute.get("value")
         if color not in ("red", "green"):
             continue
-
         if confidence > best_confidence:
             best_confidence = confidence
             best_color = str(color)
-
     return best_color
 
 def configure_robot(robot: Robot) -> None:
@@ -108,7 +104,6 @@ def configure_robot(robot: Robot) -> None:
     robot.enable_vision() 
     robot.enable_lidar()
     robot.set_lidar_filter(range_min_mm=0.0)
-
     robot.set_odometry_parameters(
         wheel_diameter=WHEEL_DIAMETER,
         wheel_base=WHEEL_BASE,
@@ -142,12 +137,11 @@ def run(robot: Robot) -> None:
     period = 1.0 / float(DEFAULT_FSM_HZ)
     next_tick = time.monotonic()
 
-    print("[STARTUP] Initialized. Press BTN_9 to start.")
+    print("[STARTUP] Initialized. Press BTN_9 to start Burger Assembly V2 (Pure Pursuit Straights).")
 
     while True:
         now = time.monotonic()
 
-        # BTN_2 Kill Switch
         if state not in ["INIT", "IDLE"] and robot.was_button_pressed(Button.BTN_2):
             if drive_handle is not None:
                 drive_handle.cancel()
@@ -158,7 +152,6 @@ def run(robot: Robot) -> None:
         if state == "INIT":
             start_robot(robot)
             robot.step_set_config(ARM_STEPPER, max_velocity=ARM_MAX_VELOCITY, acceleration=ARM_ACCELERATION)
-            # Enable servos early
             robot.enable_servo(GRIPPER_CHANNEL)
             robot.enable_servo(CAMERA_CHANNEL)
             state = "IDLE"
@@ -176,35 +169,22 @@ def run(robot: Robot) -> None:
 
         elif state == "WATCHING":
             traffic_light_color = find_traffic_light_color(robot)
-
             if traffic_light_color in ("red", "green"):
                 lights_off_at = now + LIGHT_HOLD_SEC  
-                
                 if traffic_light_color == "red":
                     robot.set_led(LED.RED, LED_BRIGHTNESS)
                     robot.set_led(LED.GREEN, 0)
                     robot.stop() 
-                    if traffic_light_color != last_shown_color:
-                        print("[VISION] Traffic Light: RED. Waiting...")
-                
                 elif traffic_light_color == "green":
                     robot.set_led(LED.RED, 0)
                     robot.set_led(LED.GREEN, LED_BRIGHTNESS)
-                    print("[VISION] Traffic Light: GREEN. Resetting camera, lifting arm, and driving forward.")
-                    
-                    # Reset camera
                     robot.set_servo(CAMERA_CHANNEL, CAMERA_DEFAULT_DEG)
-                    
-                    # Start lifting arm (non-blocking)
                     robot.step_enable(ARM_STEPPER)
                     robot.step_move(ARM_STEPPER, steps=ARM_UP_STEPS, blocking=False)
-                    
                     drive_handle = None 
                     table_detect_count = 0
                     state = "DRIVE_SEARCH_TABLE"
-                
                 last_shown_color = traffic_light_color
-
             elif lights_off_at > 0.0 and now >= lights_off_at:
                 robot.set_led(LED.RED, 0)
                 robot.set_led(LED.GREEN, 0)
@@ -213,20 +193,25 @@ def run(robot: Robot) -> None:
 
         elif state == "DRIVE_SEARCH_TABLE":
             if drive_handle is None:
-                # Long drive to find table
-                drive_handle = robot.move_forward(2000.0, velocity=VELOCITY_MM_S, tolerance=TOLERANCE_MM, blocking=False)
-            
+                # Use Pure Pursuit for long search drive
+                curr_x, curr_y, curr_theta = robot.get_odometry_pose()
+                target_x = curr_x + 2000.0 * math.cos(math.radians(curr_theta))
+                target_y = curr_y + 2000.0 * math.sin(math.radians(curr_theta))
+                drive_handle = robot.purepursuit_follow_path(
+                    waypoints=[(target_x, target_y)],
+                    velocity=VELOCITY_MM_S,
+                    lookahead=LOOKAHEAD_MM,
+                    tolerance=TOLERANCE_MM,
+                    max_angular_rad_s=MAX_ANGULAR_RAD_S,
+                    blocking=False
+                )
             points = np.asarray(robot.get_obstacles())
             dist, count = get_left_distance(points)
-            
             if dist is not None and dist < TABLE_THRESHOLD_MM:
                 table_detect_count += 1
-                print(f"[SEARCH] Table detected ({table_detect_count}/{CONSISTENT_READINGS_REQ}): {dist:.1f} mm")
             else:
                 table_detect_count = 0
-
             if table_detect_count >= CONSISTENT_READINGS_REQ:
-                print("[SEARCH] Table confirmed! Starting wall-following drive.")
                 if drive_handle is not None:
                     drive_handle.cancel()
                 robot.stop()
@@ -234,7 +219,6 @@ def run(robot: Robot) -> None:
                 start_pose = robot.get_odometry_pose()
                 state = "DRIVE_WALL_FOLLOW"
             elif drive_handle.is_finished():
-                print("[WARN] Reached end of search distance without finding table.")
                 robot.stop()
                 drive_handle = None
                 state = "IDLE"
@@ -242,180 +226,191 @@ def run(robot: Robot) -> None:
         elif state == "DRIVE_WALL_FOLLOW":
             curr_pose = robot.get_odometry_pose()
             dist_traveled = math.hypot(curr_pose[0] - start_pose[0], curr_pose[1] - start_pose[1])
-            
             points = np.asarray(robot.get_obstacles())
             dist, count = get_left_distance(points)
-            
             if dist is not None and count > 0:
                 error_mm = dist - FOLLOW_TARGET_MM
                 angular_cmd = error_mm * FOLLOW_KP
                 angular_cmd = max(-20.0, min(20.0, angular_cmd))
                 robot.set_velocity(VELOCITY_MM_S, angular_cmd)
-                
-                if np.random.rand() < 0.1:
-                    print(f"[FOLLOW] Dist:{dist:.1f}mm | Err:{error_mm:+.1f}mm | Traveled:{dist_traveled:.0f}mm")
             else:
                 robot.set_velocity(VELOCITY_MM_S, 0.0)
-
             if dist_traveled >= FOLLOW_DISTANCE_MM:
                 robot.stop()
-                print(f"[FSM] Wall-following complete ({dist_traveled:.0f}mm). Turning left 90°.")
                 state = "TURN_LEFT_90"
 
-        elif state == "TURN_LEFT_90": #left is posotive
+        elif state == "TURN_LEFT_90":
             if drive_handle is None:
-                drive_handle = robot.turn_by(90.0, blocking=False, max_angular_speed=math.radians(TURN_VELOCITY_DEG_S), tolerance_deg=TURN_TOLERANCE_DEG)
+                drive_handle = robot.turn_by(90.0, blocking=False)
             elif drive_handle.is_finished():
                 robot.stop()
                 drive_handle = None
-                print("[FSM] Turn complete. Aligning with front wall.")
                 state = "ALIGN_FRONT_WALL"
 
         elif state == "ALIGN_FRONT_WALL":
-            if robot_align_front(robot):
-                print("[FSM] Front alignment successful.")
-            else:
-                print("[WARN] Front alignment failed.")
-            
-            # Final distance report
+            if robot_align_front(robot): pass
             points = np.asarray(robot.get_obstacles())
             f_dist, f_count = get_front_distance(points)
             if f_dist is not None:
                 final_front_dist = f_dist
-                print(f"[REPORT] Final Front Distance: {final_front_dist:.1f} mm. Driving forward {final_front_dist - 20.0:.1f}mm.")
                 state = "FINAL_APPROACH"
             else:
-                print("[WARN] Front distance unknown. Returning to IDLE.")
                 state = "IDLE"
 
         elif state == "FINAL_APPROACH":
             if drive_handle is None:
                 target_fwd = final_front_dist - 40.0
                 if target_fwd > 0:
-                    drive_handle = robot.move_forward(target_fwd, velocity=VELOCITY_MM_S, tolerance=2.0, blocking=False)
+                    # Use Pure Pursuit for final approach
+                    curr_x, curr_y, curr_theta = robot.get_odometry_pose()
+                    t_x = curr_x + target_fwd * math.cos(math.radians(curr_theta))
+                    t_y = curr_y + target_fwd * math.sin(math.radians(curr_theta))
+                    drive_handle = robot.purepursuit_follow_path(
+                        waypoints=[(t_x, t_y)],
+                        velocity=VELOCITY_MM_S,
+                        lookahead=LOOKAHEAD_MM,
+                        tolerance=5.0,
+                        max_angular_rad_s=MAX_ANGULAR_RAD_S,
+                        blocking=False
+                    )
                 else:
                     state = "LOWER_ARM"
             elif drive_handle.is_finished():
                 robot.stop()
                 drive_handle = None
-                print("[FSM] Final approach complete. Lowering arm.")
                 state = "LOWER_ARM"
 
         elif state == "LOWER_ARM":
-            # Lower arm by the exact amount raised (-ARM_UP_STEPS)
-            print("[ACTION] Lowering arm...")
             robot.step_enable(ARM_STEPPER)
-            # Timeout increased to 20s as a safety measure
             if robot.step_move(ARM_STEPPER, steps=-ARM_UP_STEPS, blocking=True, timeout=20.0):
-                print("[FSM] Arm lowered. Closing gripper.")
                 state = "CLOSE_GRIPPER"
             else:
-                print("[ERROR] Stepper error during arm lowering.")
                 state = "IDLE"
 
         elif state == "CLOSE_GRIPPER":
-            # Note: Now using UI-aligned degrees (5.0) which maps to ~555us.
-            print(f"[ACTION] Closing gripper to {GRIPPER_CLOSE_DEG_MEAT}° - Blocking...")
             robot.set_servo(GRIPPER_CHANNEL, GRIPPER_CLOSE_DEG_MEAT)
             time.sleep(2.0)  
             state = "RAISE_ARM_FINAL"
 
         elif state == "RAISE_ARM_FINAL":
-            print("[ACTION] Raising arm with object...")
             robot.step_enable(ARM_STEPPER)
-            # Timeout increased to 20s as a safety measure
             if robot.step_move(ARM_STEPPER, steps=ARM_UP_STEPS, blocking=True, timeout=20.0):
-                print("[FSM] Arm raised. Starting first stage of reverse.")
                 state = "DRIVE_BACK_100"
             else:
-                print("[ERROR] Stepper error during arm raising.")
                 state = "IDLE"
 
         elif state == "DRIVE_BACK_100":
             if drive_handle is None:
-                print("[ACTION] Driving back 100mm (Stage 1/2)")
-                drive_handle = robot.move_backward(100.0, velocity=VELOCITY_MM_S, tolerance=2.0, blocking=False)
+                # Use Pure Pursuit for reverse
+                curr_x, curr_y, curr_theta = robot.get_odometry_pose()
+                t_x = curr_x - 100.0 * math.cos(math.radians(curr_theta))
+                t_y = curr_y - 100.0 * math.sin(math.radians(curr_theta))
+                drive_handle = robot.purepursuit_follow_path(
+                    waypoints=[(t_x, t_y)],
+                    velocity=VELOCITY_MM_S,
+                    lookahead=LOOKAHEAD_MM,
+                    tolerance=5.0,
+                    max_angular_rad_s=MAX_ANGULAR_RAD_S,
+                    blocking=False
+                )
             elif drive_handle.is_finished():
                 robot.stop()
                 drive_handle = None
                 state = "TURN_RIGHT_90"
 
-        elif state == "TURN_RIGHT_90": #right is neg
+        elif state == "TURN_RIGHT_90":
             if drive_handle is None:
-                print("[ACTION] Turning Right 90°")
-                drive_handle = robot.turn_by(-90.0, blocking=False, max_angular_speed=math.radians(TURN_VELOCITY_DEG_S), tolerance_deg=TURN_TOLERANCE_DEG)
+                drive_handle = robot.turn_by(-90.0, blocking=False)
             elif drive_handle.is_finished():
                 robot.stop()
                 drive_handle = None
                 state = "DRIVE_FWD_155"
+
         elif state == "DRIVE_FWD_155":
             if drive_handle is None:
-                print("[ACTION] Driving forward 150mm")
-                drive_handle = robot.move_forward(FIRST_RIGHT_FORWARD, velocity=VELOCITY_MM_S, tolerance=2.0, blocking=False)
+                # Use Pure Pursuit
+                curr_x, curr_y, curr_theta = robot.get_odometry_pose()
+                t_x = curr_x + FIRST_RIGHT_FORWARD * math.cos(math.radians(curr_theta))
+                t_y = curr_y + FIRST_RIGHT_FORWARD * math.sin(math.radians(curr_theta))
+                drive_handle = robot.purepursuit_follow_path(
+                    waypoints=[(t_x, t_y)],
+                    velocity=VELOCITY_MM_S,
+                    lookahead=LOOKAHEAD_MM,
+                    tolerance=5.0,
+                    max_angular_rad_s=MAX_ANGULAR_RAD_S,
+                    blocking=False
+                )
             elif drive_handle.is_finished():
                 robot.stop()
                 drive_handle = None
                 state = "TURN_LEFT_90_STAGE2"
 
-        elif state == "TURN_LEFT_90_STAGE2": #left is pos
+        elif state == "TURN_LEFT_90_STAGE2":
             if drive_handle is None:
-                print("[ACTION] Turning Left 90°")
-                drive_handle = robot.turn_by(90.0, blocking=False, max_angular_speed=math.radians(TURN_VELOCITY_DEG_S), tolerance_deg=TURN_TOLERANCE_DEG)
+                drive_handle = robot.turn_by(90.0, blocking=False)
             elif drive_handle.is_finished():
                 robot.stop()
                 drive_handle = None
                 state = "ALIGN_FRONT_STAGE2"
 
         elif state == "ALIGN_FRONT_STAGE2":
-            print("[ACTION] Aligning with front wall (Stage 2)")
-            if robot_align_front(robot):
-                print("[FSM] Front alignment successful.")
-            else:
-                print("[WARN] Front alignment failed.")
-            
-            # Get front distance for final approach
+            if robot_align_front(robot): pass
             points = np.asarray(robot.get_obstacles())
             f_dist, f_count = get_front_distance(points)
             if f_dist is not None:
                 final_front_dist = f_dist
-                print(f"[REPORT] Final Front Distance: {final_front_dist:.1f} mm.")
                 state = "FINAL_APPROACH_STAGE2"
             else:
-                print("[WARN] Front distance unknown. Ending sequence.")
                 state = "OPEN_GRIPPER_POST"
             
         elif state == "FINAL_APPROACH_STAGE2":
             if drive_handle is None:
                 target_fwd = final_front_dist - 40.0
                 if target_fwd > 0:
-                    drive_handle = robot.move_forward(target_fwd, velocity=VELOCITY_MM_S, tolerance=2.0, blocking=False)
+                    curr_x, curr_y, curr_theta = robot.get_odometry_pose()
+                    t_x = curr_x + target_fwd * math.cos(math.radians(curr_theta))
+                    t_y = curr_y + target_fwd * math.sin(math.radians(curr_theta))
+                    drive_handle = robot.purepursuit_follow_path(
+                        waypoints=[(t_x, t_y)],
+                        velocity=VELOCITY_MM_S,
+                        lookahead=LOOKAHEAD_MM,
+                        tolerance=5.0,
+                        max_angular_rad_s=MAX_ANGULAR_RAD_S,
+                        blocking=False
+                    )
                 else:
                     state = "OPEN_GRIPPER_POST"
             elif drive_handle.is_finished():
                 robot.stop()
                 drive_handle = None
-                print("[FSM] Phase 2 complete. Opening gripper.")
                 state = "OPEN_GRIPPER_POST"
 
         elif state == "OPEN_GRIPPER_POST":
-            print(f"[ACTION] Opening gripper to {GRIPPER_OPEN_DEG}°")
             robot.set_servo(GRIPPER_CHANNEL, GRIPPER_OPEN_DEG)
             time.sleep(1.0)
             state = "DRIVE_BACK_120_POST"
 
         elif state == "DRIVE_BACK_120_POST":
             if drive_handle is None:
-                print("[ACTION] Driving back 120mm")
-                drive_handle = robot.move_backward(120.0, velocity=VELOCITY_MM_S, tolerance=2.0, blocking=False)
+                curr_x, curr_y, curr_theta = robot.get_odometry_pose()
+                t_x = curr_x - 120.0 * math.cos(math.radians(curr_theta))
+                t_y = curr_y - 120.0 * math.sin(math.radians(curr_theta))
+                drive_handle = robot.purepursuit_follow_path(
+                    waypoints=[(t_x, t_y)],
+                    velocity=VELOCITY_MM_S,
+                    lookahead=LOOKAHEAD_MM,
+                    tolerance=5.0,
+                    max_angular_rad_s=MAX_ANGULAR_RAD_S,
+                    blocking=False
+                )
             elif drive_handle.is_finished():
                 robot.stop()
                 drive_handle = None
                 state = "TURN_LEFT_90_POST"
 
-        elif state == "TURN_LEFT_90_POST": #left is positive in our setup, but using positive degrees for UI consistency
+        elif state == "TURN_LEFT_90_POST":
             if drive_handle is None:
-                print("[ACTION] Turning Left 90°")
-                drive_handle = robot.turn_by(90.0, blocking=False, max_angular_speed=math.radians(TURN_VELOCITY_DEG_S), tolerance_deg=TURN_TOLERANCE_DEG)
+                drive_handle = robot.turn_by(90.0, blocking=False)
             elif drive_handle.is_finished():
                 robot.stop()
                 drive_handle = None
@@ -423,8 +418,17 @@ def run(robot: Robot) -> None:
 
         elif state == "DRIVE_FWD_150_POST":
             if drive_handle is None:
-                print("[ACTION] Driving forward 150mm")
-                drive_handle = robot.move_forward(110.0, velocity=VELOCITY_MM_S, tolerance=2.0, blocking=False)
+                curr_x, curr_y, curr_theta = robot.get_odometry_pose()
+                t_x = curr_x + 105.0 * math.cos(math.radians(curr_theta))
+                t_y = curr_y + 105.0 * math.sin(math.radians(curr_theta))
+                drive_handle = robot.purepursuit_follow_path(
+                    waypoints=[(t_x, t_y)],
+                    velocity=VELOCITY_MM_S,
+                    lookahead=LOOKAHEAD_MM,
+                    tolerance=5.0,
+                    max_angular_rad_s=MAX_ANGULAR_RAD_S,
+                    blocking=False
+                )
             elif drive_handle.is_finished():
                 robot.stop()
                 drive_handle = None
@@ -432,8 +436,17 @@ def run(robot: Robot) -> None:
 
         elif state == "DRIVE_FWD_150_2_POST":
             if drive_handle is None:
-                print("[ACTION] Driving forward another 150mm")
-                drive_handle = robot.move_forward(FIRST_LEFT_FORWARD, velocity=VELOCITY_MM_S, tolerance=2.0, blocking=False)
+                curr_x, curr_y, curr_theta = robot.get_odometry_pose()
+                t_x = curr_x + FIRST_LEFT_FORWARD * math.cos(math.radians(curr_theta))
+                t_y = curr_y + FIRST_LEFT_FORWARD * math.sin(math.radians(curr_theta))
+                drive_handle = robot.purepursuit_follow_path(
+                    waypoints=[(t_x, t_y)],
+                    velocity=VELOCITY_MM_S,
+                    lookahead=LOOKAHEAD_MM,
+                    tolerance=5.0,
+                    max_angular_rad_s=MAX_ANGULAR_RAD_S,
+                    blocking=False
+                )
             elif drive_handle.is_finished():
                 robot.stop()
                 drive_handle = None
@@ -441,76 +454,76 @@ def run(robot: Robot) -> None:
 
         elif state == "TURN_RIGHT_90_POST":
             if drive_handle is None:
-                print("[ACTION] Turning Right 90°")
-                drive_handle = robot.turn_by(-90.0, blocking=False, max_angular_speed=math.radians(TURN_VELOCITY_DEG_S), tolerance_deg=TURN_TOLERANCE_DEG)
+                drive_handle = robot.turn_by(-90.0, blocking=False)
             elif drive_handle.is_finished():
                 robot.stop()
                 drive_handle = None
                 state = "ALIGN_FRONT_POST"
 
         elif state == "ALIGN_FRONT_POST":
-            print("[ACTION] Aligning with front wall")
-            if robot_align_front(robot):
-                print("[FSM] Front alignment successful.")
-            else:
-                print("[WARN] Front alignment failed.")
-            
-            # Get front distance for final approach
+            if robot_align_front(robot): pass
             points = np.asarray(robot.get_obstacles())
             f_dist, f_count = get_front_distance(points)
             if f_dist is not None:
                 final_front_dist = f_dist
-                print(f"[REPORT] Final Front Distance: {final_front_dist:.1f} mm.")
                 state = "FINAL_APPROACH_POST"
             else:
-                print("[WARN] Front distance unknown. Ending sequence.")
                 state = "LOWER_ARM_FINAL"
 
         elif state == "FINAL_APPROACH_POST":
             if drive_handle is None:
                 target_fwd = final_front_dist - 40.0
-                print(f"[ACTION] Driving forward {target_fwd:.1f}mm")
                 if target_fwd > 0:
-                    drive_handle = robot.move_forward(target_fwd, velocity=VELOCITY_MM_S, tolerance=2.0, blocking=False)
+                    curr_x, curr_y, curr_theta = robot.get_odometry_pose()
+                    t_x = curr_x + target_fwd * math.cos(math.radians(curr_theta))
+                    t_y = curr_y + target_fwd * math.sin(math.radians(curr_theta))
+                    drive_handle = robot.purepursuit_follow_path(
+                        waypoints=[(t_x, t_y)],
+                        velocity=VELOCITY_MM_S,
+                        lookahead=LOOKAHEAD_MM,
+                        tolerance=5.0,
+                        max_angular_rad_s=MAX_ANGULAR_RAD_S,
+                        blocking=False
+                    )
                 else:
                     state = "LOWER_ARM_FINAL"
             elif drive_handle.is_finished():
                 robot.stop()
                 drive_handle = None
-                print("[FSM] Post-delivery approach complete. Lowering arm.")
                 state = "LOWER_ARM_FINAL"
 
         elif state == "LOWER_ARM_FINAL":
-            print("[ACTION] Lowering arm (Final)...")
             robot.step_enable(ARM_STEPPER)
             if robot.step_move(ARM_STEPPER, steps=-ARM_UP_STEPS, blocking=True, timeout=20.0):
-                print("[FSM] Arm lowered. Closing gripper to 15.0°.")
                 state = "CLOSE_GRIPPER_FINAL"
             else:
-                print("[ERROR] Stepper error during arm lowering.")
                 state = "IDLE"
 
         elif state == "CLOSE_GRIPPER_FINAL":
-            print("[ACTION] Closing gripper to 15.0°")
             robot.set_servo(GRIPPER_CHANNEL, GRIPPER_CLOSE_DEG)
             time.sleep(2.0)
             state = "RAISE_ARM_DOUBLE_FINAL"
 
         elif state == "RAISE_ARM_DOUBLE_FINAL":
-            print("[ACTION] Raising arm (Double distance)...")
             robot.step_enable(ARM_STEPPER)
-            # Raise arm twice the normal amount
             if robot.step_move(ARM_STEPPER, steps=ARM_UP_STEPS * 2, blocking=True, timeout=30.0):
-                print("[FSM] Arm raised double distance. Driving back 100mm.")
                 state = "DRIVE_BACK_FINAL"
             else:
-                print("[ERROR] Stepper error during double arm raise.")
                 state = "IDLE"
 
         elif state == "DRIVE_BACK_FINAL":
             if drive_handle is None:
-                print("[ACTION] Final Reverse: 100mm")
-                drive_handle = robot.move_backward(100.0, velocity=VELOCITY_MM_S, tolerance=2.0, blocking=False)
+                curr_x, curr_y, curr_theta = robot.get_odometry_pose()
+                t_x = curr_x - 100.0 * math.cos(math.radians(curr_theta))
+                t_y = curr_y - 100.0 * math.sin(math.radians(curr_theta))
+                drive_handle = robot.purepursuit_follow_path(
+                    waypoints=[(t_x, t_y)],
+                    velocity=VELOCITY_MM_S,
+                    lookahead=LOOKAHEAD_MM,
+                    tolerance=5.0,
+                    max_angular_rad_s=MAX_ANGULAR_RAD_S,
+                    blocking=False
+                )
             elif drive_handle.is_finished():
                 robot.stop()
                 drive_handle = None
@@ -518,8 +531,7 @@ def run(robot: Robot) -> None:
 
         elif state == "TURN_RIGHT_90_END":
             if drive_handle is None:
-                print("[ACTION] Turning Right 90° (End Phase)")
-                drive_handle = robot.turn_by(-90.0, blocking=False, max_angular_speed=math.radians(TURN_VELOCITY_DEG_S), tolerance_deg=TURN_TOLERANCE_DEG)
+                drive_handle = robot.turn_by(-90.0, blocking=False)
             elif drive_handle.is_finished():
                 robot.stop()
                 drive_handle = None
@@ -527,8 +539,17 @@ def run(robot: Robot) -> None:
 
         elif state == "DRIVE_FWD_150_END":
             if drive_handle is None:
-                print("[ACTION] Driving forward 150mm (End Phase)")
-                drive_handle = robot.move_forward(150.0, velocity=VELOCITY_MM_S, tolerance=2.0, blocking=False)
+                curr_x, curr_y, curr_theta = robot.get_odometry_pose()
+                t_x = curr_x + 150.0 * math.cos(math.radians(curr_theta))
+                t_y = curr_y + 150.0 * math.sin(math.radians(curr_theta))
+                drive_handle = robot.purepursuit_follow_path(
+                    waypoints=[(t_x, t_y)],
+                    velocity=VELOCITY_MM_S,
+                    lookahead=LOOKAHEAD_MM,
+                    tolerance=5.0,
+                    max_angular_rad_s=MAX_ANGULAR_RAD_S,
+                    blocking=False
+                )
             elif drive_handle.is_finished():
                 robot.stop()
                 drive_handle = None
@@ -536,8 +557,17 @@ def run(robot: Robot) -> None:
 
         elif state == "DRIVE_FWD_150_2_END":
             if drive_handle is None:
-                print("[ACTION] Driving forward another 150mm (End Phase)")
-                drive_handle = robot.move_forward(SECOND_RIGHT_FORWARD, velocity=VELOCITY_MM_S, tolerance=2.0, blocking=False)
+                curr_x, curr_y, curr_theta = robot.get_odometry_pose()
+                t_x = curr_x + SECOND_RIGHT_FORWARD * math.cos(math.radians(curr_theta))
+                t_y = curr_y + SECOND_RIGHT_FORWARD * math.sin(math.radians(curr_theta))
+                drive_handle = robot.purepursuit_follow_path(
+                    waypoints=[(t_x, t_y)],
+                    velocity=VELOCITY_MM_S,
+                    lookahead=LOOKAHEAD_MM,
+                    tolerance=5.0,
+                    max_angular_rad_s=MAX_ANGULAR_RAD_S,
+                    blocking=False
+                )
             elif drive_handle.is_finished():
                 robot.stop()
                 drive_handle = None
@@ -545,37 +575,37 @@ def run(robot: Robot) -> None:
 
         elif state == "TURN_LEFT_90_END":
             if drive_handle is None:
-                print("[ACTION] Turning Left 90° (End Phase)")
-                drive_handle = robot.turn_by(90.0, blocking=False, max_angular_speed=math.radians(TURN_VELOCITY_DEG_S), tolerance_deg=TURN_TOLERANCE_DEG)
+                drive_handle = robot.turn_by(90.0, blocking=False)
             elif drive_handle.is_finished():
                 robot.stop()
                 drive_handle = None
                 state = "ALIGN_FRONT_END"
 
         elif state == "ALIGN_FRONT_END":
-            print("[ACTION] Aligning with front wall (End Phase)")
-            if robot_align_front(robot):
-                print("[FSM] Front alignment successful.")
-            else:
-                print("[WARN] Front alignment failed.")
-            
-            # Get front distance for final approach
+            if robot_align_front(robot): pass
             points = np.asarray(robot.get_obstacles())
             f_dist, f_count = get_front_distance(points)
             if f_dist is not None:
                 final_front_dist = f_dist
-                print(f"[REPORT] Final Front Distance: {final_front_dist:.1f} mm.")
                 state = "FINAL_APPROACH_END"
             else:
-                print("[WARN] Front distance unknown. Ending sequence.")
-                state = "OPEN_GRIPPER_END"
+                state = "LOWER_ARM_QUARTER_END"
 
         elif state == "FINAL_APPROACH_END":
             if drive_handle is None:
                 target_fwd = final_front_dist - 40.0
-                print(f"[ACTION] Driving forward {target_fwd:.1f}mm (End Phase)")
                 if target_fwd > 0:
-                    drive_handle = robot.move_forward(target_fwd, velocity=VELOCITY_MM_S, tolerance=2.0, blocking=False)
+                    curr_x, curr_y, curr_theta = robot.get_odometry_pose()
+                    t_x = curr_x + target_fwd * math.cos(math.radians(curr_theta))
+                    t_y = curr_y + target_fwd * math.sin(math.radians(curr_theta))
+                    drive_handle = robot.purepursuit_follow_path(
+                        waypoints=[(t_x, t_y)],
+                        velocity=VELOCITY_MM_S,
+                        lookahead=LOOKAHEAD_MM,
+                        tolerance=5.0,
+                        max_angular_rad_s=MAX_ANGULAR_RAD_S,
+                        blocking=False
+                    )
                 else:
                     state = "LOWER_ARM_QUARTER_END"
             elif drive_handle.is_finished():
@@ -584,53 +614,49 @@ def run(robot: Robot) -> None:
                 state = "LOWER_ARM_QUARTER_END"
 
         elif state == "LOWER_ARM_QUARTER_END":
-            print("[ACTION] Lowering arm (1/4 distance)...")
             robot.step_enable(ARM_STEPPER)
-            # Lower by 1/4 of the usual distance
             if robot.step_move(ARM_STEPPER, steps=-ARM_UP_STEPS // 4, blocking=True, timeout=10.0):
-                print("[FSM] Arm lowered 1/4. Opening gripper.")
                 state = "OPEN_GRIPPER_END"
             else:
-                print("[ERROR] Stepper error during quarter arm lowering.")
                 state = "IDLE"
 
         elif state == "OPEN_GRIPPER_END":
-            print(f"[ACTION] Opening gripper to {GRIPPER_OPEN_DEG}° (End Phase)")
             robot.set_servo(GRIPPER_CHANNEL, GRIPPER_OPEN_DEG)
             time.sleep(1.0)
             state = "LOWER_ARM_DOUBLE_END"
 
         elif state == "LOWER_ARM_DOUBLE_END":
-            print("[ACTION] Lowering arm (Double distance)...")
             robot.step_enable(ARM_STEPPER)
-            # Lower arm by double the amount raised (-ARM_UP_STEPS * 2)
             if robot.step_move(ARM_STEPPER, steps=-ARM_UP_STEPS * 2, blocking=True, timeout=40.0):
-                print("[FSM] Arm lowered double distance. Closing gripper.")
                 state = "CLOSE_GRIPPER_END"
             else:
-                print("[ERROR] Stepper error during double arm lowering.")
                 state = "IDLE"
 
         elif state == "CLOSE_GRIPPER_END":
-            print(f"[ACTION] Closing gripper to {GRIPPER_CLOSE_DEG}°")
             robot.set_servo(GRIPPER_CHANNEL, GRIPPER_CLOSE_DEG)
             time.sleep(2.0)
             state = "RAISE_ARM_FINAL_END"
 
         elif state == "RAISE_ARM_FINAL_END":
-            print("[ACTION] Raising arm (Final Stage)...")
             robot.step_enable(ARM_STEPPER)
             if robot.step_move(ARM_STEPPER, steps=ARM_UP_STEPS, blocking=True, timeout=20.0):
-                print("[FSM] Arm raised. Final reverse.")
                 state = "DRIVE_BACK_FINAL_END"
             else:
-                print("[ERROR] Stepper error during final arm raise.")
                 state = "IDLE"
 
         elif state == "DRIVE_BACK_FINAL_END":
             if drive_handle is None:
-                print("[ACTION] Final Reverse: 100mm")
-                drive_handle = robot.move_backward(100.0, velocity=VELOCITY_MM_S, tolerance=2.0, blocking=False)
+                curr_x, curr_y, curr_theta = robot.get_odometry_pose()
+                t_x = curr_x - 100.0 * math.cos(math.radians(curr_theta))
+                t_y = curr_y - 100.0 * math.sin(math.radians(curr_theta))
+                drive_handle = robot.purepursuit_follow_path(
+                    waypoints=[(t_x, t_y)],
+                    velocity=VELOCITY_MM_S,
+                    lookahead=LOOKAHEAD_MM,
+                    tolerance=5.0,
+                    max_angular_rad_s=MAX_ANGULAR_RAD_S,
+                    blocking=False
+                )
             elif drive_handle.is_finished():
                 robot.stop()
                 drive_handle = None
@@ -638,8 +664,7 @@ def run(robot: Robot) -> None:
 
         elif state == "TURN_RIGHT_90_FINAL":
             if drive_handle is None:
-                print("[ACTION] Turning Right 90° (Final)")
-                drive_handle = robot.turn_by(-90.0, blocking=False, max_angular_speed=math.radians(TURN_VELOCITY_DEG_S), tolerance_deg=TURN_TOLERANCE_DEG)
+                drive_handle = robot.turn_by(-90.0, blocking=False)
             elif drive_handle.is_finished():
                 robot.stop()
                 drive_handle = None

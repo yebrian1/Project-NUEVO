@@ -9,6 +9,5 @@ def generate_launch_description():
             executable="bridge",
             name="bridge",
             output="screen",
-            prefix=["nice -n -20 taskset -c 0"],
         )
     ])

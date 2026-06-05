@@ -71,7 +71,6 @@ def generate_launch_description() -> LaunchDescription:
             executable="rplidar_c1_node",
             name="rplidar_c1",
             output="screen",
-            prefix=["nice -n -10 taskset -c 1"],
             parameters=[{
                 "serial_port": serial_port,
                 "serial_baudrate": ParameterValue(serial_baudrate, value_type=int),

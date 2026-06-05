@@ -203,8 +203,8 @@ class Robot(HardwareMixin, SensorsMixin, NavigationMixin, LegacyMixin):
     LAPF_FORCE_EMA_ALPHA: float = 0.35
     LAPF_INFLATION_MARGIN_MM: float = 200.0
 
-    _SERVO_MIN_US: int = 1000
-    _SERVO_MAX_US: int = 2000
+    _SERVO_MIN_US: int = 500
+    _SERVO_MAX_US: int = 2500
     _SHUTDOWN_SETTLE_S: float = 0.10
 
     def __init__(

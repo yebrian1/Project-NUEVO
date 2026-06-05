@@ -2,11 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 import time
-import numpy as np
 
 from ament_index_python.packages import get_package_share_directory
 from bridge_interfaces.msg import VisionDetection, VisionDetectionArray
-from sensor_msgs.msg import Image
 import rclpy
 from rclpy.node import Node
 
@@ -68,10 +66,10 @@ class VisionNode(Node):
         model_default = default_model_path(self._source_data_dir, self._share_data_dir)
 
         self.declare_parameter("camera_device", "/dev/video10")
-        self.declare_parameter("camera_width", 320)
-        self.declare_parameter("camera_height", 240)
-        self.declare_parameter("camera_fps", 5.0)
-        self.declare_parameter("process_rate_hz", 2.0)
+        self.declare_parameter("camera_width", 640)
+        self.declare_parameter("camera_height", 480)
+        self.declare_parameter("camera_fps", 15.0)
+        self.declare_parameter("process_rate_hz", 4.0)
         self.declare_parameter("model_path", str(model_default))
         self.declare_parameter("model_imgsz", 416)
         self.declare_parameter("confidence_threshold", 0.25)
@@ -104,7 +102,6 @@ class VisionNode(Node):
         self._log_interval_sec = max(1.0, float(self.get_parameter("log_interval_sec").value))
 
         self._publisher = self.create_publisher(VisionDetectionArray, "/vision/detections", 10)
-        self._image_publisher = self.create_publisher(Image, "/vision/image_raw", 10)
         self._camera = ManagedCamera(
             device=self._camera_device,
             width=self._camera_width,
@@ -189,19 +186,6 @@ class VisionNode(Node):
             message.detections.append(self._build_detection_msg(detected_object))
         return message
 
-    def _publish_frame(self, frame: np.ndarray, capture_stamp) -> None:
-        """Manually convert numpy BGR frame to ROS Image message and publish."""
-        msg = Image()
-        msg.header.stamp = capture_stamp
-        msg.header.frame_id = "vision_camera"
-        msg.height = frame.shape[0]
-        msg.width = frame.shape[1]
-        msg.encoding = "bgr8"
-        msg.is_bigendian = False
-        msg.step = frame.shape[1] * 3
-        msg.data = frame.tobytes()
-        self._image_publisher.publish(msg)
-
     def run(self) -> None:
         scheduler = FixedRateScheduler(self._process_rate_hz)
 
@@ -220,66 +204,57 @@ class VisionNode(Node):
                 continue
 
             capture_stamp = self.get_clock().now().to_msg()
-            self._publish_frame(frame, capture_stamp)
-            
-            # --- SMART STANDBY ---
-            # If no one is listening to detections and debug saving is off, 
-            # skip the heavy YOLO inference to save CPU/Heat.
-            if self._publisher.get_subscription_count() == 0 and not self._debug_writer.enabled:
-                inference_ms = 0.0
+            inference_start = time.monotonic()
+            try:
+                yolo_detections = self._infer_yolo_detections(frame)
+                yellow_block_detections, yellow_block_overlays = self._detect_yellow_block(frame)
+                
+                for detection in yolo_detections:
+                    object_crop = frame[
+                        detection.y : detection.y + detection.height,
+                        detection.x : detection.x + detection.width,
+                    ]
+
+                    if detection.class_name == "traffic light":
+                        traffic_light_crop = object_crop
+                        color_label, color_score = classify_traffic_light_color(traffic_light_crop)
+                        
+                        # Add attribute to the detection result; we add color here as an example
+                        detection.add_attribute("color", color_label, color_score)
+
+                    elif detection.class_name == "stop sign":
+                        stop_sign_crop = object_crop
+                        visibility_label, visibility_score = classify_stop_sign_visibility(stop_sign_crop)
+                        detection.add_attribute("visibility", visibility_label, visibility_score)
+                        
+                    elif detection.class_name == "person":
+                        person_crop = object_crop
+                        face_lighting_label, face_lighting_score = classify_person_face_lighting(person_crop)
+                        detection.add_attribute("face_lighting", face_lighting_label, face_lighting_score)
+                
+                all_detections = yolo_detections + yellow_block_detections
+
+                message = self._build_detection_array_msg(
+                    capture_stamp=capture_stamp,
+                    image_width=frame.shape[1],
+                    image_height=frame.shape[0],
+                    detected_objects=all_detections,
+                )
+                self._publisher.publish(message)
+                self._debug_writer.maybe_write(
+                    frame_bgr=frame,
+                    detected_objects=all_detections,
+                    debug_overlays=yellow_block_overlays,
+                )
+                yolo_count = len(yolo_detections)
+                yellow_block_count = len(yellow_block_detections)
+                detection_count = len(message.detections)
+            except Exception as exc:
+                self.get_logger().error(f"Vision inference failed for one frame: {exc}")
                 yolo_count = 0
                 yellow_block_count = 0
                 detection_count = 0
-            else:
-                inference_start = time.monotonic()
-                try:
-                    yolo_detections = self._infer_yolo_detections(frame)
-                    yellow_block_detections, yellow_block_overlays = self._detect_yellow_block(frame)
-                    
-                    for detection in yolo_detections:
-                        object_crop = frame[
-                            detection.y : detection.y + detection.height,
-                            detection.x : detection.x + detection.width,
-                        ]
-
-                        if detection.class_name == "traffic light":
-                            traffic_light_crop = object_crop
-                            color_label, color_score = classify_traffic_light_color(traffic_light_crop)
-                            detection.add_attribute("color", color_label, color_score)
-
-                        elif detection.class_name == "stop sign":
-                            stop_sign_crop = object_crop
-                            visibility_label, visibility_score = classify_stop_sign_visibility(stop_sign_crop)
-                            detection.add_attribute("visibility", visibility_label, visibility_score)
-                            
-                        elif detection.class_name == "person":
-                            person_crop = object_crop
-                            face_lighting_label, face_lighting_score = classify_person_face_lighting(person_crop)
-                            detection.add_attribute("face_lighting", face_lighting_label, face_lighting_score)
-                    
-                    all_detections = yolo_detections + yellow_block_detections
-
-                    message = self._build_detection_array_msg(
-                        capture_stamp=capture_stamp,
-                        image_width=frame.shape[1],
-                        image_height=frame.shape[0],
-                        detected_objects=all_detections,
-                    )
-                    self._publisher.publish(message)
-                    self._debug_writer.maybe_write(
-                        frame_bgr=frame,
-                        detected_objects=all_detections,
-                        debug_overlays=yellow_block_overlays,
-                    )
-                    yolo_count = len(yolo_detections)
-                    yellow_block_count = len(yellow_block_detections)
-                    detection_count = len(message.detections)
-                except Exception as exc:
-                    self.get_logger().error(f"Vision inference failed for one frame: {exc}")
-                    yolo_count = 0
-                    yellow_block_count = 0
-                    detection_count = 0
-                inference_ms = (time.monotonic() - inference_start) * 1000.0
+            inference_ms = (time.monotonic() - inference_start) * 1000.0
 
             now = time.monotonic()
             if now - self._last_loop_summary >= self._log_interval_sec:

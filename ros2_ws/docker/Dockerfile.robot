@@ -27,6 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-pip \
         python3-colcon-common-extensions \
         python3-rosdep \
+        python3-scipy \
     && rm -rf /var/lib/apt/lists/*
 RUN apt-get update && apt-get install -y python3-matplotlib
 
@@ -54,6 +55,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # The container loads model.ncnn.param/bin directly, avoiding torch/torchvision.
 RUN pip3 install --no-cache-dir --break-system-packages --no-deps \
     ncnn==1.0.20260114
+
+# ── Face Detection & Classification deps ──────────────────────────────────────
+# Added --ignore-installed to prevent pip from failing when trying to upgrade
+# protected system packages like scipy.
+RUN pip3 install --no-cache-dir --break-system-packages --ignore-installed \
+    onnxruntime \
+    mediapipe
 
 # ── Initialize rosdep ─────────────────────────────────────────────────────────
 RUN rosdep init || true && rosdep update
