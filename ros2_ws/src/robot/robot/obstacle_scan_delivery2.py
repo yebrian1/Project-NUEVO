@@ -47,7 +47,7 @@ from robot.lidar_helpers import (
 # ---------------------------------------------------------------------------
 TAG_ID = 21 
 POSITION_UNIT = Unit.MM
-WHEEL_DIAMETER = 80.0
+WHEEL_DIAMETER = 74.0
 WHEEL_BASE = 333.0
 INITIAL_THETA_DEG = 90.0
 
@@ -59,15 +59,14 @@ RIGHT_WHEEL_DIR_INVERTED = True
 # ---------------------------------------------------------------------------
 # Obstacle Avoidance Configuration
 # ---------------------------------------------------------------------------
-#LAPF_GOAL_MM = (800, 2525)
-LAPF_GOAL_MM = (100, 2525)
+LAPF_GOAL_MM = (0, 2000)
 LAPF_VELOCITY_MM_S = 150.0
 LAPF_TOLERANCE_MM = 50.0
 LAPF_MAX_ANGULAR_RAD_S = 1.0
 
 # LAPF behavior tuning
-LEASH_LENGTH_MM = 300.0 
-REPULSION_RANGE_MM = 400.0
+LEASH_LENGTH_MM = 350.0 
+REPULSION_RANGE_MM = 300.0
 TARGET_SPEED_MM_S = 200.0
 REPULSION_GAIN = 550.0
 ATTRACTION_GAIN = 1.0
@@ -207,7 +206,6 @@ def start_robot(robot: Robot) -> None:
     robot.wait_for_pose_update(timeout=0.2)
 
 def run(robot: Robot) -> None:
-    global LAPF_GOAL_MM
     print("[STARTUP] Standalone Obstacle Scan Delivery (V2) Initialized.")
     configure_robot_for_lapf(robot)
     classifier = CustomerClassifier(robot)
@@ -227,8 +225,9 @@ def run(robot: Robot) -> None:
 
         # BTN_2 Kill Switch
         if state != "IDLE" and robot.was_button_pressed(Button.BTN_2):
-            robot.cancel_motion()
-            drive_handle = None
+            if drive_handle is not None:
+                drive_handle.cancel()
+            robot.stop() 
             state = "IDLE"
             print("[FSM] Stopped. Returning to IDLE.")
 
@@ -249,7 +248,7 @@ def run(robot: Robot) -> None:
             curr_pose = robot.get_pose()
             if curr_pose[1] >= LAPF_GOAL_MM[1]:
                 print(f"[MASTER] Goal Y {LAPF_GOAL_MM[1]}mm reached.")
-                robot.cancel_motion()
+                robot.stop()
                 drive_handle = None
                 state = "POST_NAV_ALIGN"
 
@@ -260,88 +259,92 @@ def run(robot: Robot) -> None:
             if drive_handle is not None and drive_handle.is_finished():
                 print("[FSM] Goal reached!")
                 drive_handle = None
-                robot.cancel_motion()
+                robot.stop()
                 state = "POST_NAV_ALIGN"
 
         elif state == "POST_NAV_ALIGN":
             if drive_handle is not None:
-                robot.cancel_motion()
+                robot.stop()
                 drive_handle = None
 
             print("[MASTER] Aligning with front wall...")
             if robot_align_front(robot):
-                print("[MASTER] Aligned. Moving 10cm forward...")
-                state = "POST_NAV_FORWARD_10CM"
+                print("[MASTER] Aligned. Approaching to 75mm via LiDAR.")
+                state = "POST_NAV_APPROACH_LIDAR"
             else:
                 state = "IDLE"
 
-        elif state == "POST_NAV_FORWARD_10CM":
-            if drive_handle is None:
-                drive_handle = robot.move_forward(100.0, velocity=VELOCITY_MM_S, tolerance=5.0, blocking=False)
-            elif drive_handle.is_finished():
-                robot.cancel_motion()
-                drive_handle = None
-                print("[MASTER] 10cm move complete. Turning right 90°.")
-                state = "POST_NAV_TURN_RIGHT_90"
-
-        elif state == "POST_NAV_TURN_RIGHT_90":
-            if drive_handle is None:
-                drive_handle = robot.turn_by(-90.0, blocking=False)
-            elif drive_handle.is_finished():
-                robot.cancel_motion()
-                drive_handle = None
-                state = "POST_NAV_APPROACH_LIDAR"
-
         elif state == "POST_NAV_APPROACH_LIDAR":
-            # Hardcoded 100mm move forward
-            if drive_handle is None:
-                print("[MASTER] Moving 100mm forward for face scan...")
-                drive_handle = robot.move_forward(100.0, velocity=VELOCITY_MM_S, tolerance=5.0, blocking=False)
-            elif drive_handle.is_finished():
-                robot.cancel_motion()
-                drive_handle = None
-                print("[MASTER] Move complete. Camera is now searching for a face...")
+            # Precision approach to exactly 75mm from wall
+            if robot_approach_wall(robot, 75.0, tolerance_mm=2.0):
+                print("[MASTER] Positioned 75mm from wall. Starting scan.")
                 state = "POST_NAV_SCAN"
+            else:
+                print("[WARN] Approach failed. Retrying alignment.")
+                state = "POST_NAV_ALIGN"
 
         elif state == "POST_NAV_SCAN":
-            print("[MASTER] Camera is now searching for a face (15s timeout)...")
+            print("[MASTER] Initiating face scan (15s timeout)...")
             gender = classifier.get_gender(wait_for_face=15.0)
             if gender:
                 print(f"[RESULT] CUSTOMER IDENTIFIED: {gender}")
-                if "girl" in gender.lower():
-                    LAPF_GOAL_MM = (800.0, 400.0)
-                else: # boy
-                    LAPF_GOAL_MM = (800.0, 300.0)
-                
-                print(f"[MASTER] Gender recognized. Final goal set to {LAPF_GOAL_MM}. Starting LAPF.")
-                state = "FINAL_LAPF_START"
+                print("[MASTER] Face recognized. Starting final sequence.")
+                state = "FINAL_MOVE_FWD_75"
                 drive_handle = None
             else:
-                print("[RESULT] No face detected during scan.")
-                print("[MASTER] MISSION COMPLETE. Returning to IDLE.")
+                print("[RESULT] No face detected.")
                 show_idle_leds(robot)
                 state = "IDLE"
 
-        elif state == "FINAL_LAPF_START":
-            # Start of the final mission leg using obstacle avoidance
-            show_running_leds(robot)
-            drive_handle = start_lapf_goal(robot)
-            last_status_print_at = now
-            print(f"[FSM] FINAL LAPF — Moving toward goal {LAPF_GOAL_MM}")
-            state = "FINAL_LAPF_MOVING"
-
-        elif state == "FINAL_LAPF_MOVING":
-            if now - last_status_print_at >= STATUS_PRINT_INTERVAL_S:
-                print_lapf_status(robot)
-                last_status_print_at = now
-            
-            if drive_handle is not None and drive_handle.is_finished():
-                print("[FSM] Final mission goal reached!")
+        elif state == "FINAL_MOVE_FWD_75":
+            if drive_handle is None:
+                print("[ACTION] Driving forward 75mm")
+                drive_handle = robot.move_forward(75.0, velocity=VELOCITY_MM_S, tolerance=2.0, blocking=False)
+            elif drive_handle.is_finished():
+                robot.stop()
                 drive_handle = None
-                robot.cancel_motion()
+                state = "FINAL_TURN_RIGHT_90"
+
+        elif state == "FINAL_TURN_RIGHT_90":
+            if drive_handle is None:
+                print("[ACTION] Turning Right 90°")
+                drive_handle = robot.turn_by(-90.0, blocking=False, max_angular_speed=math.radians(TURN_VELOCITY_DEG_S), tolerance_deg=TURN_TOLERANCE_DEG)
+            elif drive_handle.is_finished():
+                robot.stop()
+                drive_handle = None
+                state = "FINAL_ALIGN_LEFT_WALL"
+
+        elif state == "FINAL_ALIGN_LEFT_WALL":
+            print("[ACTION] Aligning with left wall")
+            if robot_align_to_wall(robot, 90.0, 0.0):
+                print("[FSM] Left alignment successful.")
+            else:
+                print("[WARN] Left alignment failed. Proceeding anyway.")
+            start_pose = robot.get_odometry_pose()
+            state = "FINAL_WALL_FOLLOW_2800"
+
+        elif state == "FINAL_WALL_FOLLOW_2800":
+            curr_pose = robot.get_odometry_pose()
+            dist_traveled = math.hypot(curr_pose[0] - start_pose[0], curr_pose[1] - start_pose[1])
+            points = np.asarray(robot.get_obstacles())
+            dist, count = get_left_distance(points)
+            
+            if dist is not None and count > 0:
+                error_mm = dist - 50.0
+                angular_cmd = error_mm * FOLLOW_KP
+                angular_cmd = max(-20.0, min(20.0, angular_cmd))
+                robot.set_velocity(VELOCITY_MM_S, angular_cmd)
+                
+                if time.monotonic() % 1.0 < 0.1:
+                    print(f"[FOLLOW] Dist:{dist:.1f}mm | Err:{error_mm:+.1f}mm | Traveled:{dist_traveled:.0f}mm")
+            else:
+                robot.set_velocity(VELOCITY_MM_S, 0.0)
+
+            if dist_traveled >= 2800.0:
+                robot.stop()
+                print(f"[FSM] MISSION COMPLETE ({dist_traveled:.0f}mm).")
                 show_idle_leds(robot)
                 state = "IDLE"
-
 
         next_tick += period
         sleep_s = next_tick - time.monotonic()
@@ -361,5 +364,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         pass
     finally:
-        robot.cancel_motion()
+        robot.stop()
         rclpy.shutdown()

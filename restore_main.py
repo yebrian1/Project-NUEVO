@@ -1,4 +1,6 @@
-from __future__ import annotations
+import os
+
+content = """from __future__ import annotations
 import time
 import math
 import numpy as np
@@ -40,6 +42,7 @@ from robot.lidar_helpers import (
     robot_align_right,
     robot_align_front,
     robot_align_to_wall,
+    robot_approach_wall,
 )
 
 # ---------------------------------------------------------------------------
@@ -816,6 +819,7 @@ def run(robot: Robot) -> None:
             print(f"[ACTION] Closing gripper to {GRIPPER_CLOSE_DEG}°")
             robot.set_servo(GRIPPER_CHANNEL, GRIPPER_CLOSE_DEG)
             time.sleep(2.0)
+            state = "RAISE_ARM_DOUBLE_FINAL"
             state = "RAISE_ARM_FINAL_END"
 
         elif state == "RAISE_ARM_FINAL_END":
@@ -1020,56 +1024,88 @@ def run(robot: Robot) -> None:
 
             print("[MASTER] Aligning with front wall...")
             if robot_align_front(robot):
-                print("[MASTER] Aligned. Measuring distance.")
-                points = np.asarray(robot.get_obstacles())
-                f_dist, _ = get_front_distance(points)
-                if f_dist is not None:
-                    final_front_dist = f_dist
-                    state = "POST_NAV_APPROACH"
-                else:
-                    state = "IDLE"
+                print("[MASTER] Aligned. Approaching to 75mm via LiDAR.")
+                state = "POST_NAV_APPROACH_LIDAR"
             else:
                 state = "IDLE"
 
-        elif state == "POST_NAV_APPROACH":
-            if drive_handle is None:
-                target_fwd = final_front_dist - 120.0
-                print(f"[MASTER] Precision Approach: {target_fwd:.1f}mm")
-                drive_handle = robot.move_forward(target_fwd, velocity=VELOCITY_MM_S, tolerance=2.0, blocking=False)
-            elif drive_handle.is_finished():
-                robot.stop()
-                drive_handle = None
-                state = "POST_NAV_TURN"
-
-        elif state == "POST_NAV_TURN
-            if drive_handle is None:
-                print("[MASTER] Turning right 90° for scan.")
-                drive_handle = robot.turn_by(-90.0, blocking=False)
-            elif drive_handle.is_finished():
-                robot.stop()
-                drive_handle = None
-                state = "POST_NAV_DRIVE"
-
-        elif state == "POST_NAV_DRIVE":
-            if drive_handle is None:
-                print("[MASTER] Driving forward 100mm to scan point.")
-                drive_handle = robot.move_forward(350.0, velocity=VELOCITY_MM_S, tolerance=2.0, blocking=False)
-            elif drive_handle.is_finished():
-                robot.stop()
-                drive_handle = None
+        elif state == "POST_NAV_APPROACH_LIDAR":
+            # Precision approach to exactly 75mm from wall
+            if robot_approach_wall(robot, 75.0, tolerance_mm=2.0):
+                print("[MASTER] Positioned 75mm from wall. Starting scan.")
                 state = "POST_NAV_SCAN"
+            else:
+                print("[WARN] Approach failed. Retrying alignment.")
+                state = "POST_NAV_ALIGN"
 
         elif state == "POST_NAV_SCAN":
-            print("[MASTER] Initiating face scan...")
-            gender = classifier.get_gender(wait_for_face=5.0)
+            print("[MASTER] Initiating face scan (15s timeout)...")
+            gender = classifier.get_gender(wait_for_face=15.0)
             if gender:
                 print(f"[RESULT] CUSTOMER IDENTIFIED: {gender}")
+                print("[MASTER] Face recognized. Starting final sequence.")
+                state = "FINAL_MOVE_FWD_75"
+                drive_handle = None
             else:
                 print("[RESULT] No face detected during scan.")
+                print("[MASTER] MISSION COMPLETE. Returning to IDLE.")
+                show_idle_leds(robot)
+                state = "IDLE"
+
+        elif state == "FINAL_MOVE_FWD_75":
+            if drive_handle is None:
+                print("[ACTION] Driving forward 75mm")
+                drive_handle = robot.move_forward(75.0, velocity=VELOCITY_MM_S, tolerance=2.0, blocking=False)
+            elif drive_handle.is_finished():
+                robot.stop()
+                drive_handle = None
+                state = "FINAL_TURN_RIGHT_90"
+
+        elif state == "FINAL_TURN_RIGHT_90":
+            if drive_handle is None:
+                print("[ACTION] Turning Right 90°")
+                drive_handle = robot.turn_by(-90.0, blocking=False, max_angular_speed=math.radians(TURN_VELOCITY_DEG_S), tolerance_deg=TURN_TOLERANCE_DEG)
+            elif drive_handle.is_finished():
+                robot.stop()
+                drive_handle = None
+                state = "FINAL_ALIGN_LEFT_WALL"
+
+        elif state == "FINAL_ALIGN_LEFT_WALL":
+            print("[ACTION] Aligning with left wall")
+            # Use robot_align_to_wall with 90° (Left) and 0° (parallel target)
+            if robot_align_to_wall(robot, 90.0, 0.0):
+                print("[FSM] Left alignment successful.")
+            else:
+                print("[WARN] Left alignment failed. Proceeding anyway.")
             
-            print("[MASTER] MISSION COMPLETE. Returning to IDLE.")
-            show_idle_leds(robot)
-            state = "IDLE"
+            start_pose = robot.get_odometry_pose()
+            state = "FINAL_WALL_FOLLOW_2800"
+
+        elif state == "FINAL_WALL_FOLLOW_2800":
+            curr_pose = robot.get_odometry_pose()
+            dist_traveled = math.hypot(curr_pose[0] - start_pose[0], curr_pose[1] - start_pose[1])
+            
+            points = np.asarray(robot.get_obstacles())
+            dist, count = get_left_distance(points)
+            
+            if dist is not None and count > 0:
+                error_mm = dist - 50.0 # Maintain 50mm from left wall
+                angular_cmd = error_mm * FOLLOW_KP
+                angular_cmd = max(-20.0, min(20.0, angular_cmd))
+                robot.set_velocity(VELOCITY_MM_S, angular_cmd)
+                
+                if time.monotonic() % 1.0 < 0.1:
+                    print(f"[FOLLOW] Dist:{dist:.1f}mm | Traveled:{dist_traveled:.0f}mm")
+            else:
+                # If wall lost, drive straight
+                robot.set_velocity(VELOCITY_MM_S, 0.0)
+
+            if dist_traveled >= 2800.0:
+                robot.stop()
+                drive_handle = None
+                print(f"[FSM] Final wall-following complete ({dist_traveled:.0f}mm). MISSION COMPLETE.")
+                show_idle_leds(robot)
+                state = "IDLE"
 
         next_tick += period
         sleep_s = next_tick - time.monotonic()
@@ -1091,3 +1127,10 @@ if __name__ == "__main__":
     finally:
         robot.stop()
         rclpy.shutdown()
+
+with open('/home/raspberrypig4/Project-NUEVO/ros2_ws/src/robot/robot/main.py', 'w') as f:
+    f.write(content)
+"""
+
+with open('restore_main.py', 'w') as f:
+    f.write(content)
