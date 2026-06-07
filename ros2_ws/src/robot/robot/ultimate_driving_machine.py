@@ -980,7 +980,7 @@ def run(robot: Robot) -> None:
                     seq_step = 2
             elif seq_step == 2:
                 print("[RAMP] Step 3/4: Driving straight 2715 mm (Manual)")
-                drive_handle = robot.move_forward(2785.0, velocity=VELOCITY_MM_S, tolerance=50.0, blocking=False)
+                drive_handle = robot.move_forward(2755.0, velocity=VELOCITY_MM_S, tolerance=50.0, blocking=False)
                 seq_step = 3
             elif seq_step == 3:
                 if drive_handle is not None and drive_handle.is_finished():

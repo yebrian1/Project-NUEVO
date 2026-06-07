@@ -67,9 +67,9 @@ class VisionNode(Node):
         self._source_data_dir = Path("/ros2_ws/src/vision/data")
         model_default = default_model_path(self._source_data_dir, self._share_data_dir)
 
-        self.declare_parameter("camera_device", "/dev/video10")
-        self.declare_parameter("camera_width", 320)
-        self.declare_parameter("camera_height", 240)
+        self.declare_parameter("camera_device", "/dev/video0")
+        self.declare_parameter("camera_width", 640)
+        self.declare_parameter("camera_height", 480)
         self.declare_parameter("camera_fps", 5.0)
         self.declare_parameter("process_rate_hz", 2.0)
         self.declare_parameter("model_path", str(model_default))

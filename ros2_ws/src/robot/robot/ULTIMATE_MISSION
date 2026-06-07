@@ -141,7 +141,7 @@ CONSISTENT_READINGS_REQ = 3
 # P-Control Wall Following
 FOLLOW_TARGET_MM = 390.0
 FOLLOW_RIGHT_TARGET_MM = 370.0
-FOLLOW_DISTANCE_MM = 555.0
+FOLLOW_DISTANCE_MM = 560.0
 FOLLOW_KP = 0.3  # Angular speed (deg/s) per mm of distance error
 
 FIRST_RIGHT_FORWARD = 140.0
@@ -358,34 +358,6 @@ def run(robot: Robot) -> None:
         now = time.monotonic()
         global RUNBACK
 
-        # Check for firmware error state (e.g., UART errors, motor faults)
-        if robot.get_state() == FirmwareState.ERROR:
-            if state != "FIRMWARE_ERROR":
-                print(f"[FSM] !! Firmware ERROR detected !! (Current state: {state})")
-                if drive_handle is not None:
-                    try:
-                        if hasattr(drive_handle, "cancel"):
-                            drive_handle.cancel()
-                    except:
-                        pass
-                robot.stop()
-                state = "FIRMWARE_ERROR"
-
-        if state == "FIRMWARE_ERROR":
-            robot.set_led(LED.RED, 255)
-            # Allow user to clear error with BTN_9
-            if robot.was_button_pressed(Button.BTN_9):
-                print("[FSM] Attempting to clear error and return to IDLE...")
-                robot.reset_estop()
-                time.sleep(0.5)
-                if robot.get_state() != FirmwareState.ERROR:
-                    state = "IDLE"
-                    show_idle_leds(robot)
-                else:
-                    print("[FSM] Error clear failed. Check UART/hardware.")
-            time.sleep(0.1)
-            continue
-
         # BTN_2 Kill Switch
         if state not in ["INIT", "IDLE"] and robot.was_button_pressed(Button.BTN_2):
             if drive_handle is not None:
@@ -406,8 +378,15 @@ def run(robot: Robot) -> None:
             if robot.was_button_pressed(Button.BTN_9):
                 print(f"[ACTION] Opening gripper to {GRIPPER_OPEN_DEG}°")
                 robot.set_servo(GRIPPER_CHANNEL, GRIPPER_OPEN_DEG)
-                state = "CAMERA_SCAN"
-                
+                #state = "CAMERA_SCAN"
+                # delete below later
+                robot.step_enable(ARM_STEPPER)
+                robot.step_move(ARM_STEPPER, steps=ARM_UP_STEPS, blocking=False)
+                    
+                drive_handle = None 
+                table_detect_count = 0
+                state = "DRIVE_SEARCH_TABLE"
+                state = "DRIVE_SEARCH_TABLE"  # Skip camera scan for now, go straight to driving and obstacle detection test
 
         elif state == "CAMERA_SCAN":
             print(f"[ACTION] Turning camera to {CAMERA_SCAN_DEG}° to scan light")
@@ -980,7 +959,7 @@ def run(robot: Robot) -> None:
                     seq_step = 2
             elif seq_step == 2:
                 print("[RAMP] Step 3/4: Driving straight 2715 mm (Manual)")
-                drive_handle = robot.move_forward(2785.0, velocity=VELOCITY_MM_S, tolerance=50.0, blocking=False)
+                drive_handle = robot.move_forward(2800.0, velocity=VELOCITY_MM_S, tolerance=50.0, blocking=False)
                 seq_step = 3
             elif seq_step == 3:
                 if drive_handle is not None and drive_handle.is_finished():
@@ -1380,9 +1359,9 @@ def run(robot: Robot) -> None:
                 state = "CONTINUE_FORWARD"
 
         elif state == "CONTINUE_FORWARD":
-            # Continue forward motion for 1 second
-            if now - stop_sign_timer >= 1.0:
-                print("[ACTION] 1s forward complete. Turning left 20°.")
+            # Continue forward motion for 3 seconds
+            if now - stop_sign_timer >= 3.0:
+                print("[ACTION] 3s forward complete. Turning left 20°.")
                 robot.stop()
                 drive_handle = None
                 state = "FINAL_TURN_LEFT_20"
