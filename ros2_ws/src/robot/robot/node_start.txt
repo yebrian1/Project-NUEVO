@@ -4,6 +4,7 @@ docker compose -f ros2_ws/docker/docker-compose.rpi.yml up -d
 
 docker compose -f ros2_ws/docker/docker-compose.rpi.yml exec ros2_runtime bash 
 source install/setup.bash 
+source /ros2_ws/install/setup.bash && ros2 launch rplidar_ros rplidar_c1.launch.py serial_port:=/dev/rplidar
 ros2 launch robot everything_but_robot.launch.py
 
 docker compose -f ros2_ws/docker/docker-compose.rpi.yml exec ros2_runtime bash
@@ -22,3 +23,9 @@ docker compose -f ros2_ws/docker/docker-compose.rpi.yml restart
 ros2 topic pub --once /sys_cmd bridge_interfaces/msg/SysCommand "{command: 3}"
 
 ros2 topic echo /sys_diag_rsp
+
+#max fan
+echo 4 | sudo tee /sys/class/thermal/cooling_device1/cur_state
+#chek fan
+watch -n 1 sudo vcgencmd measure_temp
+cat /sys/class/thermal/cooling_device1/cur_state

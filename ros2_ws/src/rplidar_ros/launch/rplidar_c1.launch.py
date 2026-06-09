@@ -44,7 +44,7 @@ def generate_launch_description() -> LaunchDescription:
         ),
         DeclareLaunchArgument(
             "scan_frequency",
-            default_value="10.0",
+            default_value="5.0",
             description="Requested scan frequency in Hz.",
         ),
         DeclareLaunchArgument(

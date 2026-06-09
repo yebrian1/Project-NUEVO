@@ -7,8 +7,8 @@ from launch_ros.actions import Node
 COMMON_PARAMETERS = {
     "camera_width": 640,
     "camera_height": 480,
-    "camera_fps": 15.0,
-    "process_rate_hz": 2.0,
+    "camera_fps": 5.0,
+    "process_rate_hz": 1.5,
     "model_imgsz": 416,
     "confidence_threshold": 0.25,
     "iou_threshold": 0.7,

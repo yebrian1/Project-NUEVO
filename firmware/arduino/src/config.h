@@ -33,7 +33,7 @@
 // battery section below.
 
 // UART link to Raspberry Pi
-#define RPI_BAUD_RATE           500000  // High-speed stable rate for Mega2560 <-> RPi
+#define RPI_BAUD_RATE           250000  // High-speed stable rate for Mega2560 <-> RPi
 #define HEARTBEAT_TIMEOUT_MS    500     // Disable actuators if heartbeat stops
 
 // Shared I2C bus used by the Arduino-side sensor stack.
@@ -50,7 +50,7 @@
 #define MOTOR_UPDATE_FREQ_HZ    200     // DC control compute round
 #define SENSOR_UPDATE_FREQ_HZ   100     // Sensor dispatch task
 #define IMU_UPDATE_FREQ_HZ      25      // IMU read + Fusion update cadence
-#define USER_IO_FREQ_HZ         20      // LEDs / buttons / UI indications
+#define USER_IO_FREQ_HZ         50      // LEDs / buttons / UI indications
 
 // Human-readable status output on USB serial
 #define STATUS_REPORTER_ENABLED 0       // 1 = emit [SYSTEM]/[TIMING]/[UART], 0 = disable
@@ -208,15 +208,16 @@ extern Print &DEBUG_SERIAL;
 #define TELEMETRY_SYS_STATE_IDLE_MS       1000
 #define TELEMETRY_SYS_POWER_RUN_MS        100
 #define TELEMETRY_SYS_POWER_IDLE_MS       1000
-#define TELEMETRY_DC_STATE_MS             20
-#define TELEMETRY_STEP_STATE_MS           20
+#define TELEMETRY_DC_STATE_MS             50
+#define TELEMETRY_STEP_STATE_MS           50
 #define TELEMETRY_SERVO_STATE_MS          100
-#define TELEMETRY_IMU_MS                  40
+#define TELEMETRY_IMU_MS                  50
 #define TELEMETRY_IMU_IDLE_MS             100
 #define TELEMETRY_KINEMATICS_MS           40
 #define TELEMETRY_KINEMATICS_IDLE_MS      100
-#define TELEMETRY_IO_INPUT_STATE_MS       20
+#define TELEMETRY_IO_INPUT_STATE_MS       50
 #define TELEMETRY_IO_OUTPUT_STATE_MS      100
+
 
 // Device identification
 #define DEVICE_ID               0x01    // Arduino device ID for TLV protocol
