@@ -68,7 +68,7 @@ services:
       - NUEVO_BRIDGE_SOURCE=/workspace/nuevo_bridge_source
       - NUEVO_USERS_FILE=/data/users.json
       - NUEVO_SERIAL_PORT=/dev/ttyAMA0
-      - NUEVO_SERIAL_BAUD=115200
+      - NUEVO_SERIAL_BAUD=500000
       - PI_CAMERA_DEVICE=/dev/video0
 
 

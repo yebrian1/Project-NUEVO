@@ -94,7 +94,7 @@ STATUS_PRINT_INTERVAL_S = 0.5
 # Simplified path to avoid tethering issues at corners
 PATH_CONTROL_POINTS = [
     (0, 1300),
-    (0, 3850),  
+    (50, 3850),  
 ]
 
 POST_OBSTACLE_GPS_WAYPOINTS = [
@@ -120,12 +120,12 @@ LAPF_TOLERANCE_MM = 50.0
 LAPF_MAX_ANGULAR_RAD_S = 1.0
 
 # LAPF behavior tuning
-LEASH_LENGTH_MM = 300.0 
+LEASH_LENGTH_MM = 200.0 
 REPULSION_RANGE_MM = 300.0
 TARGET_SPEED_MM_S = 200.0
 REPULSION_GAIN = 550.0
-ATTRACTION_GAIN = 1.0
-FORCE_EMA_ALPHA = 0.35
+ATTRACTION_GAIN = 1.5
+FORCE_EMA_ALPHA = 0.25
 INFLATION_MARGIN_MM = 150.0
 LEASH_HALF_ANGLE_DEG = 25.0
 # ---------------------------------------------------------------------------
@@ -360,16 +360,11 @@ def run(robot: Robot) -> None:
 
         # Check for firmware error state (e.g., UART errors, motor faults)
         if robot.get_state() == FirmwareState.ERROR:
-            if state != "FIRMWARE_ERROR":
-                print(f"[FSM] !! Firmware ERROR detected !! (Current state: {state})")
-                if drive_handle is not None:
-                    try:
-                        if hasattr(drive_handle, "cancel"):
-                            drive_handle.cancel()
-                    except:
-                        pass
-                robot.stop()
-                state = "FIRMWARE_ERROR"
+            # Downgraded to warning: Don't stop the mission for transient errors
+            if now - last_status_print_at > 2.0: # Rate limit warning
+                print(f"[FSM] !! WARNING: Firmware ERROR state detected !! (Current state: {state})")
+                print("      Mission continuing. Check UART stats if this persists.")
+                last_status_print_at = now
 
         if state == "FIRMWARE_ERROR":
             robot.set_led(LED.RED, 255)
@@ -827,7 +822,7 @@ def run(robot: Robot) -> None:
             print("[ACTION] Lowering arm (1/4 distance)...")
             robot.step_enable(ARM_STEPPER)
             # Lower by 1/4 of the usual distance
-            if robot.step_move(ARM_STEPPER, steps=-ARM_UP_STEPS // 2.5, blocking=True, timeout=10.0):
+            if robot.step_move(ARM_STEPPER, steps=-ARM_UP_STEPS // 2, blocking=True, timeout=10.0):
                 print("[FSM] Arm lowered 1/4. Opening gripper.")
                 state = "OPEN_GRIPPER_END"
             else:
@@ -844,7 +839,7 @@ def run(robot: Robot) -> None:
             print("[ACTION] Lowering arm (Double distance)...")
             robot.step_enable(ARM_STEPPER)
             # Lower arm by double the amount raised (-ARM_UP_STEPS * 2)
-            if robot.step_move(ARM_STEPPER, steps=-ARM_UP_STEPS * 2 + ARM_UP_STEPS // 2.5, blocking=True, timeout=40.0):
+            if robot.step_move(ARM_STEPPER, steps=-ARM_UP_STEPS * 2 + ARM_UP_STEPS // 2, blocking=True, timeout=40.0):
                 print("[FSM] Arm lowered double distance. Closing gripper.")
                 state = "CLOSE_GRIPPER_END"
             else:
@@ -952,16 +947,19 @@ def run(robot: Robot) -> None:
             elif seq_step == 1:
                 if drive_handle is not None and drive_handle.is_finished():
                     print("[SEQ] Step 2/3: Driving Straight 670 mm")
-                    drive_handle = robot.move_forward(670.0, velocity=VELOCITY_MM_S, tolerance=20.0, blocking=False)
+                    drive_handle = robot.move_forward(620.0, velocity=VELOCITY_MM_S, tolerance=20.0, blocking=False)
                     seq_step = 2
             elif seq_step == 2:
                 if drive_handle is not None and drive_handle.is_finished():
+                    robot_align_to_wall(robot, 180.0, 90.0)
                     print("[SEQ] Step 3/3: Turning Right 90°")
                     drive_handle = robot.turn_by(-90.0, blocking=False)
+                    
                     seq_step = 3
             elif seq_step == 3:
                 if drive_handle is not None and drive_handle.is_finished():
                     robot.stop()
+                    robot_align_to_wall(robot, 180.0, 90.0)
                     show_idle_leds(robot)
                     print("[SEQ] Sequence complete! Transitioning to EXEC_RAMP_SEQUENCE.")
                     RUNBACK = True
@@ -982,7 +980,7 @@ def run(robot: Robot) -> None:
                     seq_step = 2
             elif seq_step == 2:
                 print("[RAMP] Step 3/4: Driving straight 2715 mm (Manual)")
-                drive_handle = robot.move_forward(2755.0, velocity=VELOCITY_MM_S*2, tolerance=50.0, blocking=False)
+                drive_handle = robot.move_forward(2555.0, velocity=VELOCITY_MM_S*2, tolerance=50.0, blocking=False)
                 seq_step = 3
             elif seq_step == 3:
                 if drive_handle is not None and drive_handle.is_finished():
