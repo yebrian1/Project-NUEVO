@@ -33,7 +33,7 @@
 // battery section below.
 
 // UART link to Raspberry Pi
-#define RPI_BAUD_RATE           200000  // Stable bring-up rate for Mega2560 <-> RPi
+#define RPI_BAUD_RATE           115200  // Stable bring-up rate for Mega2560 <-> RPi
 #define HEARTBEAT_TIMEOUT_MS    500     // Disable actuators if heartbeat stops
 
 // Shared I2C bus used by the Arduino-side sensor stack.

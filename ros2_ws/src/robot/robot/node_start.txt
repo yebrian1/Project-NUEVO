@@ -20,3 +20,5 @@ docker compose -f ros2_ws/docker/docker-compose.rpi.yml restart
 
 #clear uart errors
 ros2 topic pub --once /sys_cmd bridge_interfaces/msg/SysCommand "{command: 3}"
+
+ros2 topic echo /sys_diag_rsp

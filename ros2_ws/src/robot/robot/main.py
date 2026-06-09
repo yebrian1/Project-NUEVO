@@ -62,13 +62,13 @@ RIGHT_WHEEL_DIR_INVERTED = True
 # ---------------------------------------------------------------------------
 ARM_STEPPER        = Stepper.STEPPER_1
 ARM_UP_STEPS       = -700
-ARM_MAX_VELOCITY   = 400    # Reverted to fast version
-ARM_ACCELERATION   = 200    # Reverted to fast version
+ARM_MAX_VELOCITY   = 600    # Reverted to fast version
+ARM_ACCELERATION   = 400    # Reverted to fast version
 
 GRIPPER_CHANNEL    = ServoChannel.CH_1
 # Using UI-aligned degrees: User is tweaking these manually, leaving as-is.
 GRIPPER_OPEN_DEG   = 120.0
-GRIPPER_CLOSE_DEG  = 80.0
+GRIPPER_CLOSE_DEG  = 75.0
 GRIPPER_CLOSE_DEG_MEAT = 67
 
 CAMERA_CHANNEL     = ServoChannel.CH_2
@@ -85,7 +85,7 @@ ADVANCE_RADIUS_MM  = 250.0
 MAX_ANGULAR_RAD_S  = 1.0    
 
 #VELOCITY_MM_S = 100.0
-TURN_VELOCITY_DEG_S = 10.0
+TURN_VELOCITY_DEG_S = 20.0
 TURN_TOLERANCE_DEG = 5
 FOLLOW_KP = 0.3
 
@@ -94,7 +94,7 @@ STATUS_PRINT_INTERVAL_S = 0.5
 # Simplified path to avoid tethering issues at corners
 PATH_CONTROL_POINTS = [
     (0, 1300),
-    (0, 3950),  
+    (0, 3850),  
 ]
 
 POST_OBSTACLE_GPS_WAYPOINTS = [
@@ -121,7 +121,7 @@ LAPF_MAX_ANGULAR_RAD_S = 1.0
 
 # LAPF behavior tuning
 LEASH_LENGTH_MM = 300.0 
-REPULSION_RANGE_MM = 400.0
+REPULSION_RANGE_MM = 300.0
 TARGET_SPEED_MM_S = 200.0
 REPULSION_GAIN = 550.0
 ATTRACTION_GAIN = 1.0
@@ -141,7 +141,7 @@ CONSISTENT_READINGS_REQ = 3
 # P-Control Wall Following
 FOLLOW_TARGET_MM = 390.0
 FOLLOW_RIGHT_TARGET_MM = 370.0
-FOLLOW_DISTANCE_MM = 555.0
+FOLLOW_DISTANCE_MM = 535.0
 FOLLOW_KP = 0.3  # Angular speed (deg/s) per mm of distance error
 
 FIRST_RIGHT_FORWARD = 140.0
@@ -765,19 +765,19 @@ def run(robot: Robot) -> None:
                 drive_handle = None
                 state = "DRIVE_FWD_150_END"
 
+        # elif state == "":
+        #     if drive_handle is None:
+        #         print("[ACTION] Driving forward 150mm (End Phase)")
+        #         drive_handle = robot.move_forward(125.0, velocity=VELOCITY_MM_S, tolerance=2.0, blocking=False)
+        #     elif drive_handle.is_finished():
+        #         robot.stop()
+        #         drive_handle = None
+        #         state = "DRIVE_FWD_150_2_END"
+
         elif state == "DRIVE_FWD_150_END":
             if drive_handle is None:
-                print("[ACTION] Driving forward 150mm (End Phase)")
-                drive_handle = robot.move_forward(125.0, velocity=VELOCITY_MM_S, tolerance=2.0, blocking=False)
-            elif drive_handle.is_finished():
-                robot.stop()
-                drive_handle = None
-                state = "DRIVE_FWD_150_2_END"
-
-        elif state == "DRIVE_FWD_150_2_END":
-            if drive_handle is None:
                 print("[ACTION] Driving forward another 150mm (End Phase)")
-                drive_handle = robot.move_forward(SECOND_RIGHT_FORWARD, velocity=VELOCITY_MM_S, tolerance=2.0, blocking=False)
+                drive_handle = robot.move_forward(125.0+SECOND_RIGHT_FORWARD, velocity=VELOCITY_MM_S, tolerance=2.0, blocking=False)
             elif drive_handle.is_finished():
                 robot.stop()
                 drive_handle = None
@@ -827,7 +827,7 @@ def run(robot: Robot) -> None:
             print("[ACTION] Lowering arm (1/4 distance)...")
             robot.step_enable(ARM_STEPPER)
             # Lower by 1/4 of the usual distance
-            if robot.step_move(ARM_STEPPER, steps=-ARM_UP_STEPS // 3, blocking=True, timeout=10.0):
+            if robot.step_move(ARM_STEPPER, steps=-ARM_UP_STEPS // 2.5, blocking=True, timeout=10.0):
                 print("[FSM] Arm lowered 1/4. Opening gripper.")
                 state = "OPEN_GRIPPER_END"
             else:
@@ -844,7 +844,7 @@ def run(robot: Robot) -> None:
             print("[ACTION] Lowering arm (Double distance)...")
             robot.step_enable(ARM_STEPPER)
             # Lower arm by double the amount raised (-ARM_UP_STEPS * 2)
-            if robot.step_move(ARM_STEPPER, steps=-ARM_UP_STEPS * 2, blocking=True, timeout=40.0):
+            if robot.step_move(ARM_STEPPER, steps=-ARM_UP_STEPS * 2 + ARM_UP_STEPS // 2.5, blocking=True, timeout=40.0):
                 print("[FSM] Arm lowered double distance. Closing gripper.")
                 state = "CLOSE_GRIPPER_END"
             else:
@@ -917,7 +917,7 @@ def run(robot: Robot) -> None:
 
             drive_handle = robot.purepursuit_follow_path(
                 waypoints=PATH_CONTROL_POINTS,
-                velocity=VELOCITY_MM_S,
+                velocity=VELOCITY_MM_S*2,
                 lookahead=LOOKAHEAD_MM,
                 tolerance=TOLERANCE_MM,
                 advance_radius=ADVANCE_RADIUS_MM,
@@ -977,10 +977,12 @@ def run(robot: Robot) -> None:
                 if drive_handle is not None and drive_handle.is_finished():
                     print("[RAMP] Step 2/4: Aligning with ramp (front)...")
                     robot_align_to_wall(robot, 180.0, 90.0)
+                    robot_align_to_wall(robot, 90.0, 0.0)
+
                     seq_step = 2
             elif seq_step == 2:
                 print("[RAMP] Step 3/4: Driving straight 2715 mm (Manual)")
-                drive_handle = robot.move_forward(2785.0, velocity=VELOCITY_MM_S, tolerance=50.0, blocking=False)
+                drive_handle = robot.move_forward(2755.0, velocity=VELOCITY_MM_S*2, tolerance=50.0, blocking=False)
                 seq_step = 3
             elif seq_step == 3:
                 if drive_handle is not None and drive_handle.is_finished():
@@ -1113,15 +1115,21 @@ def run(robot: Robot) -> None:
                     final_front_dist = f_dist
                     state = "POST_NAV_APPROACH"
                 else:
+                    print("[WARN] Measurement failed during align, using previous distance.")
                     state = "POST_NAV_APPROACH"
             else:
+                print("[WARN] Front alignment failed, proceeding anyway.")
                 state = "POST_NAV_APPROACH"
 
         elif state == "POST_NAV_APPROACH":
             if drive_handle is None:
                 target_fwd = final_front_dist - 100.0
-                print(f"[MASTER] Precision Approach: {target_fwd:.1f}mm")
-                drive_handle = robot.move_forward(target_fwd, velocity=VELOCITY_MM_S, tolerance=2.0, blocking=False)
+                if target_fwd > 0:
+                    print(f"[MASTER] Precision Approach: {target_fwd:.1f}mm")
+                    drive_handle = robot.move_forward(target_fwd, velocity=VELOCITY_MM_S, tolerance=2.0, blocking=False)
+                else:
+                    print(f"[MASTER] Already close enough ({final_front_dist:.1f}mm). Skipping precision approach.")
+                    state = "POST_NAV_TURN_RIGHT_90"
             elif drive_handle.is_finished():
                 robot.cancel_motion()
                 drive_handle = None
@@ -1151,14 +1159,23 @@ def run(robot: Robot) -> None:
             elif drive_handle.is_finished():
                 robot.cancel_motion()
                 drive_handle = None
-                print("[MASTER] Aligned. Measuring distance.")
-                points = np.asarray(robot.get_obstacles())
-                f_dist, _ = get_front_distance(points)
-                if f_dist is not None:
-                    final_front_dist = f_dist
+                state = "POST_NAV_MEASURE_DIST"
+
+        elif state == "POST_NAV_MEASURE_DIST":
+            points = np.asarray(robot.get_obstacles())
+            f_dist, _ = get_front_distance(points)
+            if f_dist is not None:
+                final_front_dist = f_dist
+                target_fwd = final_front_dist - 450.0
+                if target_fwd > 0:
+                    print(f"[MASTER] Aligned. Measured: {final_front_dist:.1f}mm. Target move: {target_fwd:.1f}mm")
                     state = "POST_NAV_DRIVE_PRE_FACE_SCAN"
                 else:
-                    state = "POST_NAV_DRIVE_PRE_FACE_SCAN"
+                    print(f"[MASTER] Already close enough ({final_front_dist:.1f}mm). Proceeding to face scan.")
+                    state = "POST_NAV_SCAN"
+            else:
+                print("[MASTER] Lidar measurement failed. Retrying distance scan...")
+                time.sleep(0.5)
 
         elif state == "POST_NAV_DRIVE_PRE_FACE_SCAN":
             if drive_handle is None:
@@ -1389,7 +1406,7 @@ def run(robot: Robot) -> None:
 
         elif state == "FINAL_TURN_LEFT_20":
             if drive_handle is None:
-                drive_handle = robot.turn_by(20.0, blocking=False)
+                drive_handle = robot.turn_by(30.0, blocking=False)
             elif drive_handle.is_finished():
                 robot.stop()
                 drive_handle = None
@@ -1426,3 +1443,4 @@ if __name__ == "__main__":
     finally:
         robot.cancel_motion()
         rclpy.shutdown()
+        node.destroy_node()

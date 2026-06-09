@@ -1130,14 +1130,23 @@ def run(robot: Robot) -> None:
             elif drive_handle.is_finished():
                 robot.cancel_motion()
                 drive_handle = None
-                print("[MASTER] Aligned. Measuring distance.")
-                points = np.asarray(robot.get_obstacles())
-                f_dist, _ = get_front_distance(points)
-                if f_dist is not None:
-                    final_front_dist = f_dist
+                state = "POST_NAV_MEASURE_DIST"
+
+        elif state == "POST_NAV_MEASURE_DIST":
+            points = np.asarray(robot.get_obstacles())
+            f_dist, _ = get_front_distance(points)
+            if f_dist is not None:
+                final_front_dist = f_dist
+                target_fwd = final_front_dist - 450.0
+                if target_fwd > 0:
+                    print(f"[MASTER] Aligned. Measured: {final_front_dist:.1f}mm. Target move: {target_fwd:.1f}mm")
                     state = "POST_NAV_DRIVE_PRE_FACE_SCAN"
                 else:
-                    state = "POST_NAV_DRIVE_PRE_FACE_SCAN"
+                    print(f"[MASTER] Already close enough ({final_front_dist:.1f}mm). Proceeding to face scan.")
+                    state = "POST_NAV_SCAN"
+            else:
+                print("[MASTER] Lidar measurement failed. Retrying distance scan...")
+                time.sleep(0.5)
 
         elif state == "POST_NAV_DRIVE_PRE_FACE_SCAN":
             if drive_handle is None:
