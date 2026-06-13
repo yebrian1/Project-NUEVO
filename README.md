@@ -9,9 +9,6 @@ Group 4 - Sanjith, Mihir, Brian, Duc, Ivy, Nathan, Richard.
 ![Python](https://img.shields.io/badge/Language-Python_3.10+-blue)
 ![ROS2](https://img.shields.io/badge/Framework-ROS_2-orange)
 
-<div align="center">
-  *Placeholder: Highly recommend adding a GIF here of your robot detecting a face, grabbing an object, or avoiding an obstacle.*
-</div>
 
 ## 📌 Project Overview
 
