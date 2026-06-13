@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "course": "MAE 162D/E",
+  "year": 2026,
+  "section": "Yen",
+  "group": 4,
+  "title": "Ultimate Burger Assembling and Delivering Robot",
+  "authors": ["Sanjith Menon", "Brian Ye", "Mihir Kulkarni", "Duc Hoang", "Ivy Ma", "Nathan Chu", "Richard Zhou"],
+  "summary": "A LiDAR and camera based robot that assembles and delivers a robot through an obstacle course",
+  "thumbnail": "robot_team.jpeg",
+  "keywords": ["LiDAR", "Obstacle Avoidance", "Computer Vision"]
+}
