@@ -70,6 +70,18 @@ Building a robot bridging high-level ROS 2 software with raw electrical hardware
 * **Voltage Sag & Kinematic Drift:** Diagnosed "brownout" conditions where heavy servo loads dropped system voltage to 3.7V mid-run. Learned to implement software compensation for DC motor PWM under varying battery states, and physical power buffers to prevent stepper motor skipped steps.
 * **UART Bandwidth Throttling:** Discovered that sending unthrottled velocity commands to the Arduino during P-control loops overwhelmed the serial buffer. Implemented state-variable rate limiting (`CMD_RATE_LIMIT_S`) to cap motor updates to 10Hz, drastically improving system stability.
 
+## 👥 Team Contributions
+
+This project was a highly collaborative effort, requiring cross-functional work across software, electrical, and mechanical domains. 
+
+* **Sanjith:** Firmware integration and troubleshooting, software integration, and mount design.
+* **Brian:** Software integration, firmware troubleshooting, and 3D printing.
+* **Mihir:** Software integration, software troubleshooting, and file management.
+* **Duc:** Firmware & electrical analysis, and mount design.
+* **Nathan:** Gripper assembly mechanism design and hardware implementation.
+* **Ivy:** Project management and hardware implementation.
+* **Richard:** Top-level hardware architecture and assembly.
+
 ## Overview
 
 A modular two-wheel drive mobile robot platform designed for hands-on robotics education. Features customizable manipulators and a dual-layer control architecture for teaching embedded systems, ROS2, and mechatronics fundamentals.
