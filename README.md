@@ -34,6 +34,7 @@ A modular two-wheel drive mobile robot platform designed for hands-on robotics e
 ├── mechanical/     CAD files for chassis and manipulators
 ├── docs/           Cross-project architecture, protocol, and design docs
 └── assets/         Shared repo assets
+
 ```
 
 
@@ -49,6 +50,7 @@ A modular two-wheel drive mobile robot platform designed for hands-on robotics e
 | [firmware/README.md](firmware/README.md) | Arduino firmware overview, current features, and build instructions |
 | [firmware/docs/README.md](firmware/docs/README.md) | Firmware subsystem documentation index |
 | [NUEVO board/SPECIFICATIONS.md](NUEVO%20board/SPECIFICATIONS.md) | PCB hardware specifications |
+| [main_autonomous_robot_overview.md](ros2_ws/src/robot/robot) | Robot overview, FSM, hardware, electrical specifications |
 
 ## Technologies
 
