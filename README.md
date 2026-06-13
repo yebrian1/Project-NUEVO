@@ -24,7 +24,8 @@ The software architecture is built on a highly synchronous, non-blocking Python 
 
 * **Dynamic Obstacle Avoidance (LAPF):** Implemented Local Artificial Potential Fields to continuously calculate attractive forces toward a goal and repulsive forces from obstacles, allowing the robot to smoothly navigate around unexpected objects.
 * **Closed-Loop Wall Following:** Utilizes a P-controller (`FOLLOW_KP`) tied to lateral LiDAR distance readings to maintain a parallel trajectory alongside walls, adjusting wheel velocities dynamically to correct drift.
-* **Advanced Computer Vision Pipeline:** * **Traffic Light Detection:** Pauses state execution until a green light is confirmed.
+* **Advanced Computer Vision Pipeline:**
+    * **Traffic Light Detection:** Pauses state execution until a green light is confirmed.
     * **Customer Classification:** Executes a multi-frame "majority vote" face scanning algorithm to classify customer profiles and dynamically adjust delivery drop-off distances.
     * **Sign Recognition:** Dynamically pans the camera servo while driving to scan for and halt at stop signs.
 * **Precision LiDAR Alignment:** Calculates spatial relationships from point clouds to execute sub-centimeter halting distances and square the robot's heading perfectly perpendicular to flat walls.
@@ -36,7 +37,8 @@ The software architecture is built on a highly synchronous, non-blocking Python 
 
 * **Brains:** Raspberry Pi (Dockerized ROS 2 environment, CV processing, Path Planning, LAPF computation)
 * **Real-Time Controller:** Arduino (Motor control, hardware interrupts) communicating via UART.
-* **Sensors:** * 360° 2D LiDAR (Obstacle detection, wall tracking, precision alignment)
+* **Sensors:**
+    * 360° 2D LiDAR (Obstacle detection, wall tracking, precision alignment)
     * RGB Camera (Vision classification)
     * High-Resolution Wheel Encoders (Odometry & Dead Reckoning)
 * **Actuators:**
